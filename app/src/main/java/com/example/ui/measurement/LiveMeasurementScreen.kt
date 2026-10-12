@@ -270,15 +270,28 @@ fun LiveMeasurementScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "${strings.recordedPoints}: ${uiState.recordedPoints.size}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = when {
+                            uiState.isWaitingForFreshGps && uiState.recordedPoints.isEmpty() ->
+                                "START प्रतीक्षारत..."
+                            uiState.recordedPoints.size == 1 ->
+                                "1 कोना (START दर्ज ✓)"
+                            uiState.recordedPoints.size == 4 ->
+                                "4 कोने (चौकोर / Square ✓)"
+                            else ->
+                                "${strings.recordedPoints}: ${uiState.recordedPoints.size}"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (uiState.recordedPoints.size == 4) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
 
                 if (uiState.recordedPoints.isNotEmpty()) {
                     OutlinedButton(
                         onClick = { viewModel.undoLastPoint() },
+                        enabled = uiState.recordedPoints.size > 1,
                         modifier = Modifier.testTag("undo_point_button")
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -330,7 +343,12 @@ fun LiveMeasurementScreen(
                         ) {
                             Icon(Icons.Default.AddLocation, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(strings.addPoint, fontWeight = FontWeight.Bold)
+                            val buttonText = if (uiState.recordedPoints.isEmpty()) {
+                                "पहला कोना (START)"
+                            } else {
+                                "${strings.addPoint} (कोना #${uiState.recordedPoints.size + 1})"
+                            }
+                            Text(buttonText, fontWeight = FontWeight.Bold)
                         }
 
                         if (uiState.isPaused) {

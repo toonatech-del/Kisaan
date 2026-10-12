@@ -51,18 +51,12 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun KisanZameenTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false, // Force Light Mode always regardless of system setting
     dynamicColor: Boolean = false, // Keep agricultural branding consistent
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    // Kisan Zameen Saathi is strictly Hindi-first, high-contrast Light Theme for farmers in sunlight
+    val colorScheme = LightColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -73,7 +67,7 @@ fun KisanZameenTheme(
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
-) = KisanZameenTheme(darkTheme, dynamicColor, content)
+) = KisanZameenTheme(darkTheme = false, dynamicColor = false, content = content)

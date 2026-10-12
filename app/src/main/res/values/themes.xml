@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Prevent Android system from forcibly inverting or auto-darkening the UI -->
+        <item name="android:forceDarkAllowed" tools:targetApi="q" xmlns:tools="http://schemas.android.com/tools">false</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m" xmlns:tools="http://schemas.android.com/tools">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1" xmlns:tools="http://schemas.android.com/tools">true</item>
+        <item name="android:windowBackground">#FFF7FBF2</item>
+    </style>
 </resources>

@@ -34,6 +34,12 @@ interface LandMeasurementDao {
 
     @Query("DELETE FROM land_measurements WHERE id = :id")
     suspend fun deleteMeasurementById(id: Long)
+
+    @Query("DELETE FROM land_measurements")
+    suspend fun clearAllMeasurements()
+
+    @Query("SELECT COUNT(*) FROM land_measurements")
+    fun getMeasurementCount(): Flow<Int>
 }
 
 @Dao
@@ -56,4 +62,10 @@ interface LandCaseDao {
 
     @Delete
     suspend fun deleteCase(landCase: LandCaseEntity)
+
+    @Query("DELETE FROM land_cases")
+    suspend fun clearAllCases()
+
+    @Query("SELECT COUNT(*) FROM land_cases")
+    fun getCaseCount(): Flow<Int>
 }

@@ -86,7 +86,7 @@ fun FamilyPartitionCalculatorScreen(
     val context = LocalContext.current
     val strings = AppStrings.get(currentLanguage)
 
-    var laggiHaath by remember { mutableDoubleStateOf(6.0) }
+    var laggiHaath by remember { mutableDoubleStateOf(com.example.util.PreferencesManager.getDefaultLaggi(context)) }
     var inputMode by remember { mutableStateOf("BIHAR") }
 
     var bighaText by remember { mutableStateOf("1") }

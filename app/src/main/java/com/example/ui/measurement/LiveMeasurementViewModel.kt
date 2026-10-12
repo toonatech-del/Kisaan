@@ -13,6 +13,7 @@ import com.example.location.LocationTracker
 import com.example.util.GeoLandCalculator
 import com.example.util.GeoPoint
 import com.example.util.PolygonValidation
+import com.example.util.PreferencesManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +27,8 @@ data class LiveMeasurementUiState(
     val isTracking: Boolean = false,
     val isPaused: Boolean = false,
     val isClosed: Boolean = false,
+    val startPointRecorded: Boolean = false,
+    val isWaitingForFreshGps: Boolean = false,
     val recordedPoints: List<GeoPoint> = emptyList(),
     val currentLocation: GeoPoint? = null,
     val currentAccuracy: Float = 0f,
@@ -53,9 +56,12 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     val uiState: StateFlow<LiveMeasurementUiState> = _uiState.asStateFlow()
 
     private var locationJob: Job? = null
+    private var sessionStartTime: Long = 0L
 
     init {
         checkGpsStatus()
+        val defaultLaggi = PreferencesManager.getDefaultLaggi(application)
+        _uiState.update { it.copy(selectedLaggiHaath = defaultLaggi) }
     }
 
     fun checkGpsStatus() {
@@ -93,11 +99,16 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             return
         }
 
+        sessionStartTime = System.currentTimeMillis()
         _uiState.update {
             it.copy(
                 isTracking = true,
                 isPaused = false,
-                userNotice = "GPS चालू है: खेत के कोने पर जाकर 'बिंदु जोड़ें' दबाएं"
+                isClosed = false,
+                recordedPoints = emptyList(),
+                startPointRecorded = false,
+                isWaitingForFreshGps = true,
+                userNotice = "GPS चालू है: कृपया खेत के पहले कोने (START) पर खड़े रहें। ताज़ा सिग्नल मिलते ही START बिंदु दर्ज होगा..."
             )
         }
 
@@ -149,21 +160,33 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             speed = speed
         )
 
-        val warning = if (accuracy > 20f) {
+        val warning = if (accuracy > 15f) {
             "सावधानी: GPS संकेत कमजोर है (±${String.format(java.util.Locale.US, "%.1f", accuracy)} मी.)। खुले आसमान में आएं।"
         } else null
 
+        val now = System.currentTimeMillis()
+        val isFresh = (now - location.time < 8000L) && (location.time >= sessionStartTime - 1000L)
+
         val state = _uiState.value
-        val updatedPoints = if (state.isTracking && !state.isPaused && state.recordedPoints.isEmpty() && accuracy <= 35f) {
+        val shouldRecordStart = state.isTracking &&
+                !state.isPaused &&
+                !state.startPointRecorded &&
+                state.recordedPoints.isEmpty() &&
+                isFresh &&
+                accuracy <= 15.0f
+
+        val updatedPoints = if (shouldRecordStart) {
             listOf(currentGeo)
         } else {
             state.recordedPoints
         }
 
-        val notice = if (state.isTracking && state.recordedPoints.isEmpty() && updatedPoints.isNotEmpty()) {
-            "START बिंदु (Point #1 / शुरू) दर्ज हो गया! अब मेड़ के साथ चलें और 'बिंदु जोड़ें' दबाएं।"
-        } else {
-            state.userNotice
+        val notice = when {
+            shouldRecordStart ->
+                "पहला कोना (START / शुरू) दर्ज हो गया! अब खेत की मेड़ के साथ अगले कोने (Corner 2) पर जाएं और 'बिंदु जोड़ें' दबाएं।"
+            state.isWaitingForFreshGps && accuracy > 15f ->
+                "START की प्रतीक्षा: GPS सटीकता ±${String.format(java.util.Locale.US, "%.1f", accuracy)}m है (≤15m होने पर START दर्ज होगा)..."
+            else -> state.userNotice
         }
 
         _uiState.update {
@@ -172,7 +195,9 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
                 currentAccuracy = accuracy,
                 gpsQuality = quality,
                 warningMessage = warning,
-                userNotice = notice
+                userNotice = notice,
+                startPointRecorded = state.startPointRecorded || shouldRecordStart,
+                isWaitingForFreshGps = if (shouldRecordStart) false else state.isWaitingForFreshGps
             )
         }
 
@@ -193,14 +218,37 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             return
         }
 
-        // Prevent duplicate consecutive points within 1 meter
-        val lastPoint = state.recordedPoints.lastOrNull()
-        if (lastPoint != null) {
-            val dist = GeoLandCalculator.computeHaversineDistance(lastPoint, current)
-            if (dist < 1.0) {
-                _uiState.update { it.copy(userNotice = "यह बिंदु पिछले बिंदु के बहुत करीब है। थोड़ा आगे बढ़ें।") }
-                return
+        // If no START point recorded yet (user explicitly adds first corner manually):
+        if (state.recordedPoints.isEmpty()) {
+            appendPoint(current)
+            _uiState.update {
+                it.copy(
+                    startPointRecorded = true,
+                    isWaitingForFreshGps = false,
+                    userNotice = "पहला कोना (START / शुरू) दर्ज हो गया! अब अगले कोने पर जाएं और 'बिंदु जोड़ें' दबाएं।"
+                )
             }
+            return
+        }
+
+        // Prevent duplicate consecutive points within 2 meters
+        val lastPoint = state.recordedPoints.last()
+        val distToLast = GeoLandCalculator.computeHaversineDistance(lastPoint, current)
+        if (distToLast < 2.0) {
+            _uiState.update {
+                it.copy(userNotice = "आप पिछले दर्ज कोने के बहुत करीब हैं (${String.format(java.util.Locale.US, "%.1f", distToLast)}m)। अगले कोने पर बढ़ें।")
+            }
+            return
+        }
+
+        // Prevent re-inserting START as ordinary vertex if user has completed loop back near START
+        val startPoint = state.recordedPoints.first()
+        val distToStart = GeoLandCalculator.computeHaversineDistance(startPoint, current)
+        if (state.recordedPoints.size >= 3 && distToStart < 3.5) {
+            _uiState.update {
+                it.copy(userNotice = "आप शुरुआती कोने (START) पर पहुंच चुके हैं! बाउंड्री बंद करने के लिए 'नाप पूरी करें' दबाएं।")
+            }
+            return
         }
 
         appendPoint(current)
@@ -210,25 +258,27 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         val currentList = _uiState.value.recordedPoints.toMutableList()
         currentList.add(point)
         recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
+        val cornerNumber = currentList.size
         _uiState.update {
-            it.copy(userNotice = "बिंदु #${currentList.size} सफलतापूर्वक जोड़ा गया ✓")
+            it.copy(userNotice = "कोना #${cornerNumber} (Corner $cornerNumber) दर्ज किया गया ✓")
         }
     }
 
     fun undoLastPoint() {
         val currentList = _uiState.value.recordedPoints.toMutableList()
         if (currentList.size > 1) {
+            val removedIndex = currentList.size
             currentList.removeAt(currentList.lastIndex)
             recalculateAndValidate(currentList, isClosed = false, edited = true)
             _uiState.update {
                 it.copy(
                     isClosed = false,
-                    userNotice = "अंतिम बिंदु हटा दिया गया (Undo)"
+                    userNotice = "अंतिम कोना #${removedIndex} हटा दिया गया (Undo)"
                 )
             }
         } else if (currentList.size == 1) {
             _uiState.update {
-                it.copy(warningMessage = "START बिंदु को सीधे नहीं हटाया जा सकता। नई नाप के लिए 'रद्द करें' दबाएं।")
+                it.copy(warningMessage = "START बिंदु को Undo से नहीं हटाया जा सकता। पूरी नाप रीसेट करने के लिए 'रद्द करें' (Cancel) दबाएं।")
             }
         }
     }
@@ -260,17 +310,23 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun finishMeasurement() {
-        val points = _uiState.value.recordedPoints
+        var points = _uiState.value.recordedPoints
         if (points.size < 3) {
-            _uiState.update { it.copy(warningMessage = "नाप पूरी करने के लिए कम से कम 3 बिंदु आवश्यक हैं। खेत की मेड़ पर चलें और 'बिंदु जोड़ें' दबाएं।") }
+            _uiState.update { it.copy(warningMessage = "नाप पूरी करने के लिए कम से कम 3 बिंदु आवश्यक हैं। खेत के अगले कोने पर जाएं और 'बिंदु जोड़ें' दबाएं।") }
             return
         }
+
+        // If user accidentally tapped Add Point right at START at the very end, drop the duplicate vertex:
+        if (points.size > 3 && GeoLandCalculator.computeHaversineDistance(points.first(), points.last()) < 2.5) {
+            points = points.dropLast(1)
+        }
+
         recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
         stopTracking()
         _uiState.update {
             it.copy(
                 isReadyForReview = true,
-                userNotice = "अंतिम बिंदु (END) दर्ज किया गया • नाप पूरी हुई"
+                userNotice = "नाप पूरी हुई • कुल ${points.size} कोने दर्ज किए गए"
             )
         }
     }
@@ -287,7 +343,8 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             LiveMeasurementUiState(
                 isPermissionGranted = it.isPermissionGranted,
                 isGpsEnabled = it.isGpsEnabled,
-                linkedLandCase = it.linkedLandCase
+                linkedLandCase = it.linkedLandCase,
+                selectedLaggiHaath = it.selectedLaggiHaath
             )
         }
     }

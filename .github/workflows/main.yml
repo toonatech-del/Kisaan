@@ -55,4 +55,3 @@ jobs:
           name: Kisaan-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
-          

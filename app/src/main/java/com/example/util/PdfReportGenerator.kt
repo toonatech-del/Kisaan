@@ -245,8 +245,22 @@ object PdfReportGenerator {
             }
             projected.forEachIndexed { i, pt ->
                 val fpt = toPdfPt(pt)
-                canvas.drawCircle(fpt.x, fpt.y, 4f, vertexPaint)
-                canvas.drawText("${i + 1}", fpt.x + 6f, fpt.y - 2f, numPaint)
+                val isStart = i == 0
+                val isEnd = i == projected.size - 1
+                val ptColor = when {
+                    isStart -> Color.rgb(22, 163, 74)   // Green START
+                    isEnd -> Color.rgb(217, 119, 6)    // Amber END
+                    else -> darkGreen
+                }
+                vertexPaint.color = ptColor
+                canvas.drawCircle(fpt.x, fpt.y, 4.5f, vertexPaint)
+
+                val tag = when {
+                    isStart -> "1 (START)"
+                    isEnd -> "${i + 1} (END)"
+                    else -> "${i + 1}"
+                }
+                canvas.drawText(tag, fpt.x + 6f, fpt.y - 2f, numPaint)
             }
         }
 

@@ -54,7 +54,8 @@ fun UnitConverterScreen(
     currentLanguage: AppLanguage,
     onNavigateBack: () -> Unit
 ) {
-    var laggiHaath by remember { mutableDoubleStateOf(6.0) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var laggiHaath by remember { mutableDoubleStateOf(com.example.util.PreferencesManager.getDefaultLaggi(context)) }
     var selectedFromUnit by remember { mutableStateOf("DISMIL") }
     var inputValueText by remember { mutableStateOf("10") }
     val strings = AppStrings.get(currentLanguage)

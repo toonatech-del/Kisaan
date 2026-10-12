@@ -14,20 +14,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -41,13 +37,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.util.AppLanguage
 import com.example.util.AppStrings
-import com.example.util.Strings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HelpSettingsScreen(
     currentLanguage: AppLanguage,
-    onLanguageChanged: (AppLanguage) -> Unit,
     onNavigateBack: () -> Unit
 ) {
     val strings = AppStrings.get(currentLanguage)
@@ -75,51 +69,7 @@ fun HelpSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Language Selector Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Language,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                strings.selectLanguage,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            FilterChip(
-                                selected = currentLanguage == AppLanguage.HINDI,
-                                onClick = { onLanguageChanged(AppLanguage.HINDI) },
-                                label = { Text("हिन्दी (Hindi)", fontWeight = FontWeight.Bold, fontSize = 14.sp) },
-                                modifier = Modifier.weight(1f).height(42.dp).testTag("lang_hindi_chip")
-                            )
-                            FilterChip(
-                                selected = currentLanguage == AppLanguage.ENGLISH,
-                                onClick = { onLanguageChanged(AppLanguage.ENGLISH) },
-                                label = { Text("English", fontWeight = FontWeight.Bold, fontSize = 14.sp) },
-                                modifier = Modifier.weight(1f).height(42.dp).testTag("lang_english_chip")
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 2. App Info Card
+            // 1. App Info Card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -151,7 +101,7 @@ fun HelpSettingsScreen(
                 }
             }
 
-            // 3. Privacy & Offline Support
+            // 2. Privacy & Offline Support
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -183,7 +133,7 @@ fun HelpSettingsScreen(
                 }
             }
 
-            // 4. GPS Accuracy Guide
+            // 3. GPS Accuracy Guide
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),

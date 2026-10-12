@@ -27,6 +27,7 @@ import com.example.ui.partition.FamilyPartitionCalculatorScreen
 import com.example.ui.partition.HeirShare
 import com.example.ui.services.BiharServicesScreen
 import com.example.ui.settings.HelpSettingsScreen
+import com.example.ui.settings.SettingsScreen
 import com.example.ui.theme.KisanZameenTheme
 import com.example.util.AppLanguage
 import com.example.util.LanguageManager
@@ -40,7 +41,8 @@ enum class Screen {
     DIVISION_DIAGRAM,
     UNIT_CONVERTER,
     BIHAR_SERVICES,
-    HELP_SETTINGS
+    HELP_SETTINGS,
+    SETTINGS
 }
 
 class MainActivity : ComponentActivity() {
@@ -77,6 +79,10 @@ fun KisanZameenApp(
         Screen.HOME -> {
             HomeScreen(
                 currentLanguage = currentLanguage,
+                onLanguageChanged = { newLang ->
+                    currentLanguage = newLang
+                    LanguageManager.saveLanguage(context, newLang)
+                },
                 onNavigateToLiveMeasurement = {
                     measurementViewModel.cancelMeasurement()
                     currentScreen = Screen.LIVE_MEASUREMENT
@@ -85,7 +91,8 @@ fun KisanZameenApp(
                 onNavigateToPartition = { currentScreen = Screen.FAMILY_PARTITION },
                 onNavigateToConverter = { currentScreen = Screen.UNIT_CONVERTER },
                 onNavigateToServices = { currentScreen = Screen.BIHAR_SERVICES },
-                onNavigateToHelp = { currentScreen = Screen.HELP_SETTINGS }
+                onNavigateToHelp = { currentScreen = Screen.HELP_SETTINGS },
+                onNavigateToSettings = { currentScreen = Screen.SETTINGS }
             )
         }
 
@@ -182,6 +189,14 @@ fun KisanZameenApp(
         Screen.HELP_SETTINGS -> {
             BackHandler { currentScreen = Screen.HOME }
             HelpSettingsScreen(
+                currentLanguage = currentLanguage,
+                onNavigateBack = { currentScreen = Screen.HOME }
+            )
+        }
+
+        Screen.SETTINGS -> {
+            BackHandler { currentScreen = Screen.HOME }
+            SettingsScreen(
                 currentLanguage = currentLanguage,
                 onLanguageChanged = { newLang ->
                     currentLanguage = newLang

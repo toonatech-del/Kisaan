@@ -1,9 +1,16 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,14 +25,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -46,6 +61,9 @@ import androidx.compose.ui.unit.sp
 import com.example.util.GeoLandCalculator
 import com.example.util.GeoPoint
 import com.example.util.Point2D
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +81,35 @@ fun SchematicPlotView(
     val blueColor = Color(0xFF1976D2)
     val amberColor = Color(0xFFF59E0B)
     val gridColor = Color(0xFFE2E8F0)
+
+    // State for legend visibility and auto-dismiss timer
+    var isLegendVisible by remember { mutableStateOf(true) }
+    var userInteractingWithLegend by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    var autoHideJob by remember { mutableStateOf<Job?>(null) }
+
+    fun scheduleAutoHide(delayMs: Long = 2000L) {
+        autoHideJob?.cancel()
+        autoHideJob = coroutineScope.launch {
+            delay(delayMs)
+            if (!userInteractingWithLegend) {
+                isLegendVisible = false
+            }
+        }
+    }
+
+    // When the screen opens, show the legend briefly for 2 seconds, then automatically hide it
+    LaunchedEffect(Unit) {
+        scheduleAutoHide(2000L)
+    }
+
+    // Trigger auto-hide if points list changes or isClosed changes (if legend was opened due to an action)
+    val pointCount = points.size
+    LaunchedEffect(pointCount, isClosed) {
+        if (isLegendVisible && !userInteractingWithLegend) {
+            scheduleAutoHide(2000L)
+        }
+    }
 
     Box(
         modifier = modifier
@@ -349,43 +396,145 @@ fun SchematicPlotView(
             }
         }
 
-        // Accessible Map Legend Overlay (Bottom-Start)
-        Surface(
+        // Legend and Info controls container
+        // Small unobtrusive Legend / ℹ️ button in map corner (Bottom-Start)
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(8.dp),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-            shadowElevation = 3.dp
+                .padding(8.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            if (!isLegendVisible) {
+                Surface(
+                    onClick = {
+                        isLegendVisible = true
+                        scheduleAutoHide(2000L)
+                    },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.testTag("legend_toggle_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "संकेत सूची (Legend)",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "संकेत / Legend",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        // Animated Legend Overlay popup
+        AnimatedVisibility(
+            visible = isLegendVisible,
+            enter = fadeIn() + scaleIn(initialScale = 0.95f),
+            exit = fadeOut() + scaleOut(targetScale = 0.95f),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                shadowElevation = 6.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier
+                    .testTag("legend_overlay_popup")
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onPress = {
+                                userInteractingWithLegend = true
+                                autoHideJob?.cancel()
+                                tryAwaitRelease()
+                                userInteractingWithLegend = false
+                                // Dismiss shortly after interaction ends (e.g. 2s)
+                                scheduleAutoHide(2000L)
+                            },
+                            onTap = {
+                                // Tapping inside keeps it open for another 2 seconds
+                                scheduleAutoHide(2000L)
+                            }
+                        )
+                    }
             ) {
-                Text(
-                    text = "मानचित्र संकेत (Legend):",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF16A34A), CircleShape))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("START / शुरू", fontSize = 10.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(greenColor, CircleShape))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("बिंदु (Vertex)", fontSize = 10.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(Color(0xFFD97706), CircleShape))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("END / अंतिम", fontSize = 10.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF0284C7), CircleShape))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("आपकी लाइव लोकेशन / Your live location", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
+                Column(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(0.68f),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "मानचित्र संकेत (Legend)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                autoHideJob?.cancel()
+                                isLegendVisible = false
+                            },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Legend",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).background(Color(0xFF16A34A), CircleShape))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("START / शुरू", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).background(greenColor, CircleShape))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("बिंदु (Vertex)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).background(Color(0xFFD97706), CircleShape))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("END / अंतिम", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).background(Color(0xFF0284C7), CircleShape))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("आपकी लाइव लोकेशन / Live GPS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
+                    }
+                    Text(
+                        text = "GPS निर्देशांकों पर आधारित रेखाचित्र",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
                 }
             }
         }
@@ -414,33 +563,6 @@ fun SchematicPlotView(
                     text = "उत्तर (N)",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Offline notice banner at bottom
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(8.dp),
-            shape = RoundedCornerShape(6.dp),
-            color = Color(0xFFF1F5F9).copy(alpha = 0.92f)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = Color(0xFF64748B),
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "ऑफलाइन रेखाचित्र • GPS निर्देशांकों पर आधारित",
-                    fontSize = 11.sp,
-                    color = Color(0xFF475569)
                 )
             }
         }
