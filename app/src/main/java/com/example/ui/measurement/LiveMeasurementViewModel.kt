@@ -93,10 +93,42 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         _uiState.update { it.copy(selectedLaggiHaath = laggi) }
     }
 
+    private var latestLocation: Location? = null
+    private var lastRecordedPoint: GeoPoint? = null
+    
+    // ...
+    
     fun addCornerRequested() {
         if (_uiState.value.isPaused) return
-        _uiState.update { it.copy(isStabilizing = true, userNotice = "कोना स्थिर हो रहा है... [0/3 samples]") }
-        cornerSamples.clear()
+        
+        val now = SystemClock.elapsedRealtimeNanos()
+        val loc = latestLocation
+        
+        if (loc != null && (now - loc.elapsedRealtimeNanos) < 2_500_000_000L && loc.accuracy <= 4.5f) {
+            addPoint(GeoPoint(loc.latitude, loc.longitude, loc.accuracy))
+        } else {
+            _uiState.update { it.copy(isStabilizing = true, userNotice = "कोना स्थिर हो रहा है... [0/3 samples]") }
+            cornerSamples.clear()
+        }
+    }
+    
+    private fun addPoint(newPoint: GeoPoint) {
+        val last = _uiState.value.recordedPoints.lastOrNull()
+        if (last != null) {
+            val results = FloatArray(1)
+            Location.distanceBetween(last.lat, last.lng, newPoint.lat, newPoint.lng, results)
+            if (results[0] < 2.5f) {
+                _uiState.update { it.copy(userNotice = "Aap pichle kone ke bohot kareeb hain. Kripya agle kone par chalkar jayein.") }
+                return
+            }
+        }
+        
+        val newPoints = _uiState.value.recordedPoints + newPoint
+        recalculateAndValidate(newPoints, _uiState.value.isClosed, edited = true)
+        
+        // Vibrate
+        val vibrator = getApplication<Application>().getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+        vibrator.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     fun startTracking() {
@@ -141,23 +173,8 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private fun processLocationUpdate(location: Location) {
-        val nowNanos = SystemClock.elapsedRealtimeNanos()
-        val locNanos = location.elapsedRealtimeNanos
-        val ageSeconds = (nowNanos - locNanos) / 1_000_000_000.0
-        
-        if (ageSeconds > 3.0) return
-
-        val accuracy = location.accuracy
-        
-        if (accuracy > 3.5f) {
-            _uiState.update { it.copy(warningMessage = "GPS सटीकता कम है: ±${String.format(java.util.Locale.US, "%.1f", accuracy)}m", goodFixCount = 0) }
-            return
-        } else {
-            _uiState.update { it.copy(warningMessage = null) }
-            if (goodFixCount < 3) {
-                goodFixCount++
-                _uiState.update { it.copy(goodFixCount = goodFixCount) }
-            }
+        if (location.hasAccuracy() && location.accuracy <= 4.5f) {
+            latestLocation = location
         }
 
         val state = _uiState.value
@@ -186,13 +203,12 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             return
         }
         
-        // ... (existing logic for start/moving location marker)
         val currentGeo = GeoPoint(
             lat = location.latitude,
             lng = location.longitude,
-            accuracy = accuracy
+            accuracy = location.accuracy
         )
-        _uiState.update { it.copy(currentLocation = currentGeo, currentAccuracy = accuracy) }
+        _uiState.update { it.copy(currentLocation = currentGeo, currentAccuracy = location.accuracy) }
     }
 
     fun undoLastPoint() {
