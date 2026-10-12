@@ -1,0 +1,6 @@
+{
+  "name": "Kisan Zameen Saathi",
+  "description": "Bihar land measurement and records app with live GPS boundary mapping, land partition calculator, and reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

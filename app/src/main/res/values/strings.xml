@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Kisan Zameen Saathi</string>
+    <string name="app_tagline">किसान ज़मीन साथी - बिहार भूमि मापन एवं बंटवारा</string>
+    <string name="live_gps_measurement">खेत की लाइव नाप</string>
+    <string name="live_gps_measurement_subtitle">खेत की मेड़ के साथ चलें और रकबा देखें</string>
+    <string name="land_partition_calculator">पारिवारिक ज़मीन बंटवारा</string>
+    <string name="land_cases_records">ज़मीन केस और रिकॉर्ड</string>
+    <string name="unit_converter">इकाई परिवर्तक (रकबा)</string>
+</resources>
