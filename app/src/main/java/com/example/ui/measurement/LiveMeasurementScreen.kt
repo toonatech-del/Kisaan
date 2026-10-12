@@ -334,12 +334,18 @@ fun LiveMeasurementScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { viewModel.addManualPoint() },
+                            onClick = { viewModel.addCornerRequested() },
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
                                 .testTag("add_point_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1E5631),
+                                disabledContainerColor = Color(0xFFE0E0E0),
+                                contentColor = Color.White,
+                                disabledContentColor = Color(0xFF757575)
+                            ),
+                            enabled = if (uiState.recordedPoints.isEmpty()) uiState.goodFixCount >= 3 else true
                         ) {
                             Icon(Icons.Default.AddLocation, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -348,7 +354,7 @@ fun LiveMeasurementScreen(
                             } else {
                                 "${strings.addPoint} (कोना #${uiState.recordedPoints.size + 1})"
                             }
-                            Text(buttonText, fontWeight = FontWeight.Bold)
+                            Text(buttonText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
 
                         if (uiState.isPaused) {
@@ -535,13 +541,15 @@ private fun GpsStatusCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (uiState.currentAccuracy > 0f) {
+                        text = if (uiState.goodFixCount < 3) {
+                            "GPS Satellite Fix ho raha hai... Ek jagah khade rahein (${uiState.goodFixCount}/3) [±${String.format(Locale.US, "%.1f", uiState.currentAccuracy)}m]"
+                        } else if (uiState.currentAccuracy > 0f) {
                             "${strings.accuracy}: ±${String.format(Locale.US, "%.1f", uiState.currentAccuracy)} m"
                         } else {
                             "${strings.accuracy}: ${strings.waiting}"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (uiState.goodFixCount < 3) Color(0xFF991B1B) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

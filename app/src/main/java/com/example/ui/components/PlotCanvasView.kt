@@ -8,12 +8,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import com.example.engine.SurveyPoint
+import com.example.util.GeoPoint
 import com.example.engine.GpsLandSurveyEngine
 
 @Composable
 fun PlotCanvasView(
-    points: List<SurveyPoint>,
+    points: List<GeoPoint>,
     modifier: Modifier = Modifier
 ) {
     val engine = GpsLandSurveyEngine()

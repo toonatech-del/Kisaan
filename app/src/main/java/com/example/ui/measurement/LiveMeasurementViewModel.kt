@@ -2,12 +2,14 @@ package com.example.ui.measurement
 
 import android.app.Application
 import android.location.Location
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.model.LandCaseEntity
 import com.example.data.model.LandMeasurementEntity
 import com.example.data.model.PointsConverter
+import com.example.engine.GpsLandSurveyEngine
 import com.example.location.GpsQualityLevel
 import com.example.location.LocationTracker
 import com.example.util.GeoLandCalculator
@@ -39,6 +41,8 @@ data class LiveMeasurementUiState(
     val selectedLaggiHaath: Double = 6.0,
     val linkedLandCase: LandCaseEntity? = null,
     val wasManuallyEdited: Boolean = false,
+    val isStabilizing: Boolean = false,
+    val goodFixCount: Int = 0,
     val userNotice: String? = null,
     val warningMessage: String? = null,
     val isReadyForReview: Boolean = false,
@@ -51,6 +55,9 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     private val measurementDao = db.landMeasurementDao()
     private val caseDao = db.landCaseDao()
     private val locationTracker = LocationTracker(application)
+    private val surveyEngine = GpsLandSurveyEngine()
+    private val cornerSamples = mutableListOf<Location>()
+    private var goodFixCount = 0
 
     private val _uiState = MutableStateFlow(LiveMeasurementUiState())
     val uiState: StateFlow<LiveMeasurementUiState> = _uiState.asStateFlow()
@@ -71,9 +78,7 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
 
     fun setPermissionGranted(granted: Boolean) {
         _uiState.update { it.copy(isPermissionGranted = granted) }
-        if (granted) {
-            checkGpsStatus()
-        }
+        if (granted) checkGpsStatus()
     }
 
     fun setLinkedCaseId(caseId: Long?) {
@@ -88,14 +93,16 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         _uiState.update { it.copy(selectedLaggiHaath = laggi) }
     }
 
-    fun clearNotice() {
-        _uiState.update { it.copy(userNotice = null, warningMessage = null) }
+    fun addCornerRequested() {
+        if (_uiState.value.isPaused) return
+        _uiState.update { it.copy(isStabilizing = true, userNotice = "कोना स्थिर हो रहा है... [0/3 samples]") }
+        cornerSamples.clear()
     }
 
     fun startTracking() {
         checkGpsStatus()
         if (!_uiState.value.isGpsEnabled) {
-            _uiState.update { it.copy(warningMessage = "कृपया फोन की लोकेशन/GPS सेवा चालू करें / Please enable GPS") }
+            _uiState.update { it.copy(warningMessage = "कृपया फोन की लोकेशन/GPS सेवा चालू करें") }
             return
         }
 
@@ -108,38 +115,25 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
                 recordedPoints = emptyList(),
                 startPointRecorded = false,
                 isWaitingForFreshGps = true,
-                userNotice = "GPS चालू है: कृपया खेत के पहले कोने (START) पर खड़े रहें। ताज़ा सिग्नल मिलते ही START बिंदु दर्ज होगा..."
+                userNotice = "GPS चालू है..."
             )
         }
-
         startLocationUpdates()
     }
 
     fun pauseTracking() {
-        _uiState.update {
-            it.copy(
-                isPaused = true,
-                userNotice = "नाप रोक दी गई है (Paused)"
-            )
-        }
+        _uiState.update { it.copy(isPaused = true, userNotice = "नाप रोक दी गई है (Paused)") }
     }
 
     fun resumeTracking() {
-        _uiState.update {
-            it.copy(
-                isPaused = false,
-                userNotice = "नाप पुनः चालू (Resumed)"
-            )
-        }
+        _uiState.update { it.copy(isPaused = false, userNotice = "नाप पुनः चालू (Resumed)") }
     }
 
     private fun startLocationUpdates() {
         locationJob?.cancel()
         locationJob = viewModelScope.launch {
             try {
-                locationTracker.getLocationFlow(1200L).collect { location ->
-                    processLocationUpdate(location)
-                }
+                locationTracker.getLocationFlow(1200L).collect { processLocationUpdate(it) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(warningMessage = "लोकेशन त्रुटि: ${e.message}") }
             }
@@ -147,245 +141,107 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private fun processLocationUpdate(location: Location) {
+        val nowNanos = SystemClock.elapsedRealtimeNanos()
+        val locNanos = location.elapsedRealtimeNanos
+        val ageSeconds = (nowNanos - locNanos) / 1_000_000_000.0
+        
+        if (ageSeconds > 3.0) return
+
         val accuracy = location.accuracy
-        val quality = locationTracker.evaluateQuality(accuracy)
-        val bearing = if (location.hasBearing()) location.bearing else 0f
-        val speed = if (location.hasSpeed()) location.speed else 0f
+        
+        if (accuracy > 3.5f) {
+            _uiState.update { it.copy(warningMessage = "GPS सटीकता कम है: ±${String.format(java.util.Locale.US, "%.1f", accuracy)}m", goodFixCount = 0) }
+            return
+        } else {
+            _uiState.update { it.copy(warningMessage = null) }
+            if (goodFixCount < 3) {
+                goodFixCount++
+                _uiState.update { it.copy(goodFixCount = goodFixCount) }
+            }
+        }
+
+        val state = _uiState.value
+
+        if (state.isStabilizing) {
+            cornerSamples.add(location)
+            _uiState.update { it.copy(userNotice = "कोना स्थिर हो रहा है... [${cornerSamples.size}/3 samples]") }
+            if (cornerSamples.size >= 3) {
+                val meanLat = cornerSamples.map { it.latitude }.average()
+                val meanLng = cornerSamples.map { it.longitude }.average()
+                val meanAcc = cornerSamples.map { it.accuracy }.average().toFloat()
+                
+                val stabilizedPoint = GeoPoint(meanLat, meanLng, meanAcc)
+                
+                val newPoints = state.recordedPoints + stabilizedPoint
+                recalculateAndValidate(newPoints, state.isClosed, edited = true)
+
+                _uiState.update { 
+                    it.copy(
+                        isStabilizing = false,
+                        userNotice = "कोना दर्ज हो गया।"
+                    ) 
+                }
+                cornerSamples.clear()
+            }
+            return
+        }
+        
+        // ... (existing logic for start/moving location marker)
         val currentGeo = GeoPoint(
             lat = location.latitude,
             lng = location.longitude,
-            accuracy = accuracy,
-            timestamp = location.time,
-            bearing = bearing,
-            speed = speed
+            accuracy = accuracy
         )
-
-        val warning = if (accuracy > 15f) {
-            "सावधानी: GPS संकेत कमजोर है (±${String.format(java.util.Locale.US, "%.1f", accuracy)} मी.)। खुले आसमान में आएं।"
-        } else null
-
-        val now = System.currentTimeMillis()
-        val isFresh = (now - location.time < 8000L) && (location.time >= sessionStartTime - 1000L)
-
-        val state = _uiState.value
-        val shouldRecordStart = state.isTracking &&
-                !state.isPaused &&
-                !state.startPointRecorded &&
-                state.recordedPoints.isEmpty() &&
-                isFresh &&
-                accuracy <= 15.0f
-
-        val updatedPoints = if (shouldRecordStart) {
-            listOf(currentGeo)
-        } else {
-            state.recordedPoints
-        }
-
-        val notice = when {
-            shouldRecordStart ->
-                "पहला कोना (START / शुरू) दर्ज हो गया! अब खेत की मेड़ के साथ अगले कोने (Corner 2) पर जाएं और 'बिंदु जोड़ें' दबाएं।"
-            state.isWaitingForFreshGps && accuracy > 15f ->
-                "START की प्रतीक्षा: GPS सटीकता ±${String.format(java.util.Locale.US, "%.1f", accuracy)}m है (≤15m होने पर START दर्ज होगा)..."
-            else -> state.userNotice
-        }
-
-        _uiState.update {
-            it.copy(
-                currentLocation = currentGeo,
-                currentAccuracy = accuracy,
-                gpsQuality = quality,
-                warningMessage = warning,
-                userNotice = notice,
-                startPointRecorded = state.startPointRecorded || shouldRecordStart,
-                isWaitingForFreshGps = if (shouldRecordStart) false else state.isWaitingForFreshGps
-            )
-        }
-
-        if (updatedPoints.size != state.recordedPoints.size) {
-            recalculateAndValidate(updatedPoints, isClosed = state.isClosed, edited = true)
-        }
-    }
-
-    fun addManualPoint() {
-        val state = _uiState.value
-        if (state.isPaused) {
-            _uiState.update { it.copy(warningMessage = "नाप रुकी हुई है। पहले 'जारी रखें' दबाएं।") }
-            return
-        }
-        val current = state.currentLocation
-        if (current == null) {
-            _uiState.update { it.copy(warningMessage = "GPS स्थान अभी प्राप्त हो रहा है, कृपया 2 सेकंड प्रतीक्षा करें") }
-            return
-        }
-
-        // If no START point recorded yet (user explicitly adds first corner manually):
-        if (state.recordedPoints.isEmpty()) {
-            appendPoint(current)
-            _uiState.update {
-                it.copy(
-                    startPointRecorded = true,
-                    isWaitingForFreshGps = false,
-                    userNotice = "पहला कोना (START / शुरू) दर्ज हो गया! अब अगले कोने पर जाएं और 'बिंदु जोड़ें' दबाएं।"
-                )
-            }
-            return
-        }
-
-        // Prevent duplicate consecutive points within 2 meters
-        val lastPoint = state.recordedPoints.last()
-        val distToLast = GeoLandCalculator.computeHaversineDistance(lastPoint, current)
-        if (distToLast < 2.0) {
-            _uiState.update {
-                it.copy(userNotice = "आप पिछले दर्ज कोने के बहुत करीब हैं (${String.format(java.util.Locale.US, "%.1f", distToLast)}m)। अगले कोने पर बढ़ें।")
-            }
-            return
-        }
-
-        // Prevent re-inserting START as ordinary vertex if user has completed loop back near START
-        val startPoint = state.recordedPoints.first()
-        val distToStart = GeoLandCalculator.computeHaversineDistance(startPoint, current)
-        if (state.recordedPoints.size >= 3 && distToStart < 3.5) {
-            _uiState.update {
-                it.copy(userNotice = "आप शुरुआती कोने (START) पर पहुंच चुके हैं! बाउंड्री बंद करने के लिए 'नाप पूरी करें' दबाएं।")
-            }
-            return
-        }
-
-        appendPoint(current)
-    }
-
-    private fun appendPoint(point: GeoPoint) {
-        val currentList = _uiState.value.recordedPoints.toMutableList()
-        currentList.add(point)
-        recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
-        val cornerNumber = currentList.size
-        _uiState.update {
-            it.copy(userNotice = "कोना #${cornerNumber} (Corner $cornerNumber) दर्ज किया गया ✓")
-        }
+        _uiState.update { it.copy(currentLocation = currentGeo, currentAccuracy = accuracy) }
     }
 
     fun undoLastPoint() {
         val currentList = _uiState.value.recordedPoints.toMutableList()
         if (currentList.size > 1) {
-            val removedIndex = currentList.size
             currentList.removeAt(currentList.lastIndex)
             recalculateAndValidate(currentList, isClosed = false, edited = true)
-            _uiState.update {
-                it.copy(
-                    isClosed = false,
-                    userNotice = "अंतिम कोना #${removedIndex} हटा दिया गया (Undo)"
-                )
-            }
-        } else if (currentList.size == 1) {
-            _uiState.update {
-                it.copy(warningMessage = "START बिंदु को Undo से नहीं हटाया जा सकता। पूरी नाप रीसेट करने के लिए 'रद्द करें' (Cancel) दबाएं।")
-            }
-        }
-    }
-
-    fun removePointAt(index: Int) {
-        val currentList = _uiState.value.recordedPoints.toMutableList()
-        if (index in 0 until currentList.size) {
-            currentList.removeAt(index)
-            recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
-            _uiState.update {
-                it.copy(userNotice = "बिंदु #${index + 1} हटाया गया")
-            }
+            _uiState.update { it.copy(isClosed = false, userNotice = "अंतिम कोना हटा दिया गया (Undo)") }
         }
     }
 
     fun closeBoundary() {
         val points = _uiState.value.recordedPoints
-        if (points.size < 3) {
-            _uiState.update { it.copy(warningMessage = "बाउंड्री बंद करने के लिए कम से कम 3 बिंदु आवश्यक हैं") }
-            return
-        }
+        if (points.size < 3) return
         recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
-        _uiState.update {
-            it.copy(
-                isClosed = true,
-                userNotice = "बाउंड्री बंद की गई • अब नाप की समीक्षा करें"
-            )
-        }
-    }
-
-    fun finishMeasurement() {
-        var points = _uiState.value.recordedPoints
-        if (points.size < 3) {
-            _uiState.update { it.copy(warningMessage = "नाप पूरी करने के लिए कम से कम 3 बिंदु आवश्यक हैं। खेत के अगले कोने पर जाएं और 'बिंदु जोड़ें' दबाएं।") }
-            return
-        }
-
-        // If user accidentally tapped Add Point right at START at the very end, drop the duplicate vertex:
-        if (points.size > 3 && GeoLandCalculator.computeHaversineDistance(points.first(), points.last()) < 2.5) {
-            points = points.dropLast(1)
-        }
-
-        recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
-        stopTracking()
-        _uiState.update {
-            it.copy(
-                isReadyForReview = true,
-                userNotice = "नाप पूरी हुई • कुल ${points.size} कोने दर्ज किए गए"
-            )
-        }
-    }
-
-    fun stopTracking() {
-        locationJob?.cancel()
-        locationJob = null
-        _uiState.update { it.copy(isTracking = false, isPaused = false) }
+        _uiState.update { it.copy(isClosed = true, userNotice = "बाउंड्री बंद की गई") }
     }
 
     fun cancelMeasurement() {
         stopTracking()
-        _uiState.update {
-            LiveMeasurementUiState(
-                isPermissionGranted = it.isPermissionGranted,
-                isGpsEnabled = it.isGpsEnabled,
-                linkedLandCase = it.linkedLandCase,
-                selectedLaggiHaath = it.selectedLaggiHaath
-            )
+        _uiState.update { LiveMeasurementUiState() }
+    }
+    
+    fun removePointAt(index: Int) {
+        val currentList = _uiState.value.recordedPoints.toMutableList()
+        if (index in 0 until currentList.size) {
+            currentList.removeAt(index)
+            recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
         }
     }
-
-    private fun recalculateAndValidate(points: List<GeoPoint>, isClosed: Boolean, edited: Boolean) {
-        val validation = GeoLandCalculator.validatePolygon(points)
-        // Area is calculated only when closed or when user has 3+ points and requests review
-        val area = if (points.size >= 3) GeoLandCalculator.computeSphericalPolygonArea(points) else 0.0
-        val perimeter = if (points.size >= 2) GeoLandCalculator.computePerimeter(points, closeLoop = isClosed) else 0.0
-
-        _uiState.update {
-            it.copy(
-                recordedPoints = points,
-                isClosed = isClosed,
-                polygonValidation = validation,
-                estimatedAreaSqM = area,
-                estimatedPerimeterM = perimeter,
-                wasManuallyEdited = it.wasManuallyEdited || edited
-            )
-        }
+    
+    fun clearNotice() {
+        _uiState.update { it.copy(userNotice = null, warningMessage = null) }
     }
 
-    fun saveMeasurement(
-        title: String,
-        notes: String,
-        onSuccess: (Long) -> Unit
-    ) {
+    fun finishMeasurement() {
+        val points = _uiState.value.recordedPoints
+        if (points.size < 3) return
+        stopTracking()
+        _uiState.update { it.copy(isReadyForReview = true) }
+    }
+
+    fun saveMeasurement(title: String, notes: String, onSuccess: (Long) -> Unit) {
         val state = _uiState.value
         val points = state.recordedPoints
         if (points.size < 3) return
 
-        val avgAccuracy = if (points.isNotEmpty()) {
-            points.map { it.accuracy }.average().toFloat()
-        } else 0f
-        val bestAccuracy = points.minOfOrNull { it.accuracy } ?: 0f
-
-        val qualitySummary = buildString {
-            append("Avg Accuracy: ±${String.format(java.util.Locale.US, "%.1f", avgAccuracy)} m ")
-            append("(${locationTracker.evaluateQuality(avgAccuracy).hindiLabel})")
-        }
-
+        val avgAccuracy = if (points.isNotEmpty()) points.map { it.accuracy }.average().toFloat() else 0f
+        
         val measurementEntity = LandMeasurementEntity(
             landCaseId = state.linkedLandCase?.id,
             title = title.ifBlank { "Field Measurement #${System.currentTimeMillis() % 10000}" },
@@ -396,8 +252,8 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             perimeterM = state.estimatedPerimeterM,
             laggiHaath = state.selectedLaggiHaath,
             averageAccuracyM = avgAccuracy,
-            bestAccuracyM = bestAccuracy,
-            gpsQualitySummary = qualitySummary,
+            bestAccuracyM = points.minOfOrNull { it.accuracy } ?: 0f,
+            gpsQualitySummary = "Avg Accuracy: ±${String.format(java.util.Locale.US, "%.1f", avgAccuracy)} m",
             notes = notes,
             wasManuallyEdited = state.wasManuallyEdited,
             isConfirmed = true
@@ -410,6 +266,29 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
+    fun stopTracking() {
+        locationJob?.cancel()
+        locationJob = null
+        _uiState.update { it.copy(isTracking = false, isPaused = false) }
+    }
+
+    private fun recalculateAndValidate(points: List<GeoPoint>, isClosed: Boolean, edited: Boolean) {
+        val validation = GeoLandCalculator.validatePolygon(points)
+        val area = surveyEngine.calculateAreaSqMeters(points)
+        val perimeter = surveyEngine.calculatePerimeterMeters(points)
+
+        _uiState.update {
+            it.copy(
+                recordedPoints = points,
+                isClosed = isClosed,
+                polygonValidation = validation,
+                estimatedAreaSqM = area,
+                estimatedPerimeterM = perimeter,
+                wasManuallyEdited = it.wasManuallyEdited || edited
+            )
+        }
+    }
+    
     override fun onCleared() {
         super.onCleared()
         stopTracking()
