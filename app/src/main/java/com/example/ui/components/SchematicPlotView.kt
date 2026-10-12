@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -191,79 +192,118 @@ fun SchematicPlotView(
                 val offset = toCanvasOffset(p2d)
                 val isSelected = selectedPointIndex == index
                 val isFirst = index == 0
+                val isLast = isClosed && index == boundaryProjected.size - 1
 
-                // Outer circle ring
                 val pointColor = when {
                     isSelected -> Color(0xFFEF4444)
-                    isFirst -> Color(0xFF16A34A)
+                    isFirst -> Color(0xFF16A34A) // START green
+                    isLast -> Color(0xFFD97706)  // END amber
                     else -> greenColor
                 }
 
                 drawCircle(
                     color = Color.White,
-                    radius = if (isSelected) 14f else 11f,
+                    radius = if (isSelected) 15f else 12f,
                     center = offset
                 )
                 drawCircle(
                     color = pointColor,
-                    radius = if (isSelected) 12f else 9f,
+                    radius = if (isSelected) 13f else 10f,
                     center = offset
                 )
 
-                // Label point number
+                // Label text / badge
+                val labelText = when {
+                    isFirst -> "START"
+                    isLast -> "END"
+                    else -> "${index + 1}"
+                }
+
                 val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.DKGRAY
-                    textSize = 28f
+                    color = android.graphics.Color.WHITE
+                    textSize = 22f
                     isFakeBoldText = true
                     textAlign = android.graphics.Paint.Align.CENTER
                 }
                 drawContext.canvas.nativeCanvas.drawText(
-                    "${index + 1}",
+                    labelText,
                     offset.x,
-                    offset.y - 14f,
+                    offset.y + 7f,
                     paint
+                )
+
+                // Sub-label below vertex
+                val subPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.DKGRAY
+                    textSize = 22f
+                    isFakeBoldText = true
+                    textAlign = android.graphics.Paint.Align.CENTER
+                }
+                val subText = when {
+                    isFirst -> "शुरू (START)"
+                    isLast -> "अंतिम (END)"
+                    else -> "बिंदु ${index + 1}"
+                }
+                drawContext.canvas.nativeCanvas.drawText(
+                    subText,
+                    offset.x,
+                    offset.y - 18f,
+                    subPaint
                 )
             }
 
-            // 5. Draw current live GPS location with accuracy radius
+            // 5. Draw current live GPS person marker with accuracy radius
             if (currentProjected != null && currentLocation != null) {
                 val currentOffset = toCanvasOffset(currentProjected)
-                val accuracyPixels = max(currentLocation.accuracy * scale, 12f)
+                val accuracyPixels = max(currentLocation.accuracy * scale, 14f)
+                val personColor = Color(0xFF0284C7)
 
-                // Accuracy circle
+                // Accuracy circle halo
                 drawCircle(
-                    color = blueColor.copy(alpha = 0.15f),
+                    color = personColor.copy(alpha = 0.12f),
                     radius = accuracyPixels,
                     center = currentOffset
                 )
                 drawCircle(
-                    color = blueColor.copy(alpha = 0.4f),
+                    color = personColor.copy(alpha = 0.35f),
                     radius = accuracyPixels,
                     center = currentOffset,
                     style = Stroke(width = 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
                 )
 
-                // Pulse dot
+                // Person marker base circle
                 drawCircle(
                     color = Color.White,
-                    radius = 12f,
+                    radius = 16f,
                     center = currentOffset
                 )
                 drawCircle(
-                    color = blueColor,
-                    radius = 9f,
+                    color = personColor,
+                    radius = 14f,
                     center = currentOffset
                 )
 
-                // Label
+                // Person silhouette (Head + Body)
+                drawCircle(
+                    color = Color.White,
+                    radius = 4f,
+                    center = Offset(currentOffset.x, currentOffset.y - 4f)
+                )
+                val bodyPath = Path().apply {
+                    moveTo(currentOffset.x - 6f, currentOffset.y + 7f)
+                    quadraticTo(currentOffset.x, currentOffset.y + 1f, currentOffset.x + 6f, currentOffset.y + 7f)
+                }
+                drawPath(bodyPath, Color.White, style = Stroke(width = 3f, cap = StrokeCap.Round))
+
+                // Accessible Label for Live Location
                 val currentPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.BLUE
-                    textSize = 26f
+                    color = android.graphics.Color.parseColor("#0284C7")
+                    textSize = 24f
                     isFakeBoldText = true
                     textAlign = android.graphics.Paint.Align.CENTER
                 }
                 drawContext.canvas.nativeCanvas.drawText(
-                    "आप यहाँ हैं",
+                    "आपकी लाइव लोकेशन / Your live location",
                     currentOffset.x,
                     currentOffset.y + 36f,
                     currentPaint
@@ -295,17 +335,58 @@ fun SchematicPlotView(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "मेड़ पर खड़े होकर 'शुरू करें' दबाएं",
+                    text = "मेड़ पर खड़े होकर 'नाप शुरू करें' दबाएं",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "खेत के कोने-कोने पर बिंदु जोड़ें और रेखाचित्र देखें",
+                    text = "पहला बिंदु (START) स्वचालित रूप से दर्ज होगा",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        // Accessible Map Legend Overlay (Bottom-Start)
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            shadowElevation = 3.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = "मानचित्र संकेत (Legend):",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF16A34A), CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("START / शुरू", fontSize = 10.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(greenColor, CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("बिंदु (Vertex)", fontSize = 10.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Color(0xFFD97706), CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("END / अंतिम", fontSize = 10.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Color(0xFF0284C7), CircleShape))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("आपकी लाइव लोकेशन / Your live location", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
+                }
             }
         }
 

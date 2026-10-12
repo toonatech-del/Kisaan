@@ -16,7 +16,9 @@ data class GeoPoint(
     val lat: Double,
     val lng: Double,
     val accuracy: Float = 0f,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val bearing: Float = 0f,
+    val speed: Float = 0f
 )
 
 /**
