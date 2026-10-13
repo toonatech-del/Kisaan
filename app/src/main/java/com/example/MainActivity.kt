@@ -42,12 +42,14 @@ enum class Screen {
     UNIT_CONVERTER,
     BIHAR_SERVICES,
     HELP_SETTINGS,
-    SETTINGS
+    SETTINGS,
+    MANUAL_CALCULATOR
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        org.osmdroid.config.Configuration.getInstance().userAgentValue = packageName
         enableEdgeToEdge()
         setContent {
             KisanZameenTheme {
@@ -92,7 +94,8 @@ fun KisanZameenApp(
                 onNavigateToConverter = { currentScreen = Screen.UNIT_CONVERTER },
                 onNavigateToServices = { currentScreen = Screen.BIHAR_SERVICES },
                 onNavigateToHelp = { currentScreen = Screen.HELP_SETTINGS },
-                onNavigateToSettings = { currentScreen = Screen.SETTINGS }
+                onNavigateToSettings = { currentScreen = Screen.SETTINGS },
+                onNavigateToManualCalculator = { currentScreen = Screen.MANUAL_CALCULATOR }
             )
         }
 
@@ -110,6 +113,9 @@ fun KisanZameenApp(
                 },
                 onNavigateToReview = {
                     currentScreen = Screen.MEASUREMENT_REVIEW
+                },
+                onNavigateToManualCalculator = {
+                    currentScreen = Screen.MANUAL_CALCULATOR
                 }
             )
         }
@@ -202,6 +208,14 @@ fun KisanZameenApp(
                     currentLanguage = newLang
                     LanguageManager.saveLanguage(context, newLang)
                 },
+                onNavigateBack = { currentScreen = Screen.HOME }
+            )
+        }
+
+        Screen.MANUAL_CALCULATOR -> {
+            BackHandler { currentScreen = Screen.HOME }
+            com.example.ui.calculator.ManualLandCalculatorScreen(
+                currentLanguage = currentLanguage,
                 onNavigateBack = { currentScreen = Screen.HOME }
             )
         }

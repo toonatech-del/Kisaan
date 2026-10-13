@@ -208,6 +208,15 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
         }
     }
+
+    fun updatePointCoordinates(index: Int, lat: Double, lng: Double) {
+        val currentList = _uiState.value.recordedPoints.toMutableList()
+        if (index in 0 until currentList.size) {
+            val oldPt = currentList[index]
+            currentList[index] = oldPt.copy(lat = lat, lng = lng)
+            recalculateAndValidate(currentList, isClosed = _uiState.value.isClosed, edited = true)
+        }
+    }
     
     fun clearNotice() {
         _uiState.update { it.copy(userNotice = null, warningMessage = null) }

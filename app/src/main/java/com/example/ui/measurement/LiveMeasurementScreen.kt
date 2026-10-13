@@ -32,6 +32,12 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.filled.SquareFoot
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -85,7 +91,8 @@ fun LiveMeasurementScreen(
     viewModel: LiveMeasurementViewModel,
     currentLanguage: AppLanguage,
     onNavigateBack: () -> Unit,
-    onNavigateToReview: () -> Unit
+    onNavigateToReview: () -> Unit,
+    onNavigateToManualCalculator: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -115,13 +122,23 @@ fun LiveMeasurementScreen(
         }
     }
 
-    LaunchedEffect(uiState.isReadyForReview) {
-        if (uiState.isReadyForReview) {
-            onNavigateToReview()
+    LaunchedEffect(Unit) {
+        val fineGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarseGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            viewModel.setPermissionGranted(true)
+            if (!uiState.isTracking) {
+                viewModel.startTracking()
+            }
         }
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = {
@@ -159,6 +176,16 @@ fun LiveMeasurementScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onNavigateToManualCalculator,
+                        modifier = Modifier.testTag("action_manual_calc")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SquareFoot,
+                            contentDescription = "Fita Calculator",
+                            tint = Color(0xFF1E5631)
+                        )
+                    }
                     IconButton(onClick = { showExplanationDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Info,
@@ -252,176 +279,250 @@ fun LiveMeasurementScreen(
                 else -> Unit
             }
 
-            SchematicPlotView(
+            com.example.ui.components.OsmLandMapView(
                 points = uiState.recordedPoints,
                 currentLocation = uiState.currentLocation,
                 isClosed = uiState.isClosed,
-                selectedPointIndex = selectedPointForEdit,
-                onPointSelected = { selectedPointForEdit = it },
+                onPointMoved = { index, lat, lng ->
+                    viewModel.updatePointCoordinates(index, lat, lng)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = when {
-                            uiState.isWaitingForFreshGps && uiState.recordedPoints.isEmpty() ->
-                                "START प्रतीक्षारत..."
-                            uiState.recordedPoints.size == 1 ->
-                                "1 कोना (START दर्ज ✓)"
-                            uiState.recordedPoints.size == 4 ->
-                                "4 कोने (चौकोर / Square ✓)"
-                            else ->
-                                "${strings.recordedPoints}: ${uiState.recordedPoints.size}"
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (uiState.recordedPoints.size == 4) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                if (uiState.recordedPoints.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = { viewModel.undoLastPoint() },
-                        enabled = uiState.recordedPoints.size > 1,
-                        modifier = Modifier.testTag("undo_point_button")
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(strings.undoLast, fontSize = 12.sp)
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (!uiState.isTracking && uiState.recordedPoints.isEmpty()) {
-                Button(
-                    onClick = {
-                        if (!uiState.isPermissionGranted) {
-                            permissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
-                                )
-                            )
-                        } else {
-                            viewModel.startTracking()
-                        }
-                    },
+            // Dedicated Responsive Bottom Control Dock
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bottom_action_dock"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
-                        .testTag("start_measurement_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(strings.startMeasurementBtn, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Status & Undo Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = { viewModel.addCornerRequested() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("add_point_button"),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF1E5631),
-                                disabledContainerColor = Color(0xFFE0E0E0),
-                                contentColor = Color.White,
-                                disabledContentColor = Color(0xFF757575)
-                            ),
-                            enabled = uiState.currentAccuracy <= 8.0f
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.AddLocation, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            val buttonText = if (uiState.recordedPoints.isEmpty()) {
-                                "पहला कोना (START)"
-                            } else {
-                                "${strings.addPoint} (कोना #${uiState.recordedPoints.size + 1})"
+                            Surface(
+                                shape = CircleShape,
+                                color = if (uiState.recordedPoints.size >= 3) Color(0xFF15803D) else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "${uiState.recordedPoints.size}",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
-                            Text(buttonText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = when {
+                                    uiState.recordedPoints.isEmpty() -> "पहला कोना (START दर्ज करें)"
+                                    uiState.recordedPoints.size == 1 -> "१ कोना दर्ज ✓ (अगले कोने पर जाएं)"
+                                    uiState.recordedPoints.size == 4 -> "४ कोने (चौकोर / Square ✓)"
+                                    else -> "${uiState.recordedPoints.size} कोने दर्ज ✓"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
-                        if (uiState.isPaused) {
+                        if (uiState.recordedPoints.isNotEmpty()) {
                             OutlinedButton(
-                                onClick = { viewModel.resumeTracking() },
+                                onClick = { viewModel.undoLastPoint() },
+                                enabled = uiState.recordedPoints.size > 1,
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("resume_tracking_button")
+                                    .heightIn(min = 36.dp)
+                                    .testTag("undo_point_button"),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text(strings.resume, fontWeight = FontWeight.Bold)
-                            }
-                        } else {
-                            OutlinedButton(
-                                onClick = { viewModel.pauseTracking() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("pause_tracking_button")
-                            ) {
-                                Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.pause, fontWeight = FontWeight.Bold)
+                                Text(strings.undoLast, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (!uiState.isClosed && uiState.recordedPoints.size >= 3) {
-                            OutlinedButton(
-                                onClick = { viewModel.closeBoundary() },
+                    // Primary Action Rows
+                    if (!uiState.isTracking && uiState.recordedPoints.isEmpty()) {
+                        Button(
+                            onClick = {
+                                if (!uiState.isPermissionGranted) {
+                                    permissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                        )
+                                    )
+                                } else {
+                                    viewModel.startTracking()
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("start_measurement_button"),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(strings.startMeasurementBtn, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        // Row 1: Add Point / Start + Pause/Resume
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isGpsAccurate = uiState.currentAccuracy in 0.001f..7.0f
+                            Button(
+                                onClick = { viewModel.addCornerRequested() },
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("close_boundary_button")
+                                    .weight(1.3f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("add_point_button"),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF1E5631),
+                                    disabledContainerColor = Color(0xFFE0E0E0),
+                                    contentColor = Color.White,
+                                    disabledContentColor = Color(0xFF757575)
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                enabled = isGpsAccurate
                             ) {
-                                Text(strings.closeBoundary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.AddLocation, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                val buttonText = if (uiState.recordedPoints.isEmpty()) {
+                                    "पहला कोना (START)"
+                                } else {
+                                    "अगला कोना (#${uiState.recordedPoints.size + 1})"
+                                }
+                                Text(
+                                    text = buttonText,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            if (uiState.isPaused) {
+                                OutlinedButton(
+                                    onClick = { viewModel.resumeTracking() },
+                                    modifier = Modifier
+                                        .weight(0.85f)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("resume_tracking_button"),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.resume, fontWeight = FontWeight.Bold, fontSize = 12.5.sp, maxLines = 1)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { viewModel.pauseTracking() },
+                                    modifier = Modifier
+                                        .weight(0.85f)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("pause_tracking_button"),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.pause, fontWeight = FontWeight.Bold, fontSize = 12.5.sp, maxLines = 1)
+                                }
                             }
                         }
 
-                        Button(
-                            onClick = { viewModel.finishMeasurement() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("complete_measurement_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
-                            enabled = uiState.recordedPoints.size >= 3
+                        // Row 2: Secondary / Completion Actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.completeMeasurement, fontWeight = FontWeight.Bold)
-                        }
+                            if (!uiState.isClosed && uiState.recordedPoints.size >= 3) {
+                                OutlinedButton(
+                                    onClick = { viewModel.closeBoundary() },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("close_boundary_button"),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = strings.closeBoundary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
 
-                        OutlinedButton(
-                            onClick = { showCancelDialog = true },
-                            modifier = Modifier.height(48.dp).testTag("cancel_measurement_button"),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626))
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(strings.cancel)
+                            Button(
+                                onClick = { viewModel.finishMeasurement() },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("complete_measurement_button"),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF15803D),
+                                    disabledContainerColor = Color(0xFFE0E0E0),
+                                    contentColor = Color.White,
+                                    disabledContentColor = Color(0xFF757575)
+                                ),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                enabled = uiState.recordedPoints.size >= 3
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = strings.completeMeasurement,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { showCancelDialog = true },
+                                modifier = Modifier
+                                    .weight(0.7f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("cancel_measurement_button"),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626))
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(2.dp))
+                                Text(
+                                    text = strings.cancel,
+                                    fontSize = 12.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -500,7 +601,7 @@ private fun GpsStatusCard(
     onEnableGpsClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("gps_status_card"),
         colors = CardDefaults.cardColors(
             containerColor = when (uiState.gpsQuality) {
                 GpsQualityLevel.EXCELLENT -> Color(0xFFF0FDF4)
@@ -518,7 +619,10 @@ private fun GpsStatusCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
                 val qualityColor = when (uiState.gpsQuality) {
                     GpsQualityLevel.EXCELLENT -> QualityExcellent
                     GpsQualityLevel.GOOD -> QualityGood
@@ -533,12 +637,14 @@ private fun GpsStatusCard(
                         .background(qualityColor, CircleShape)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "${strings.gpsSignalStatus}: ${uiState.gpsQuality.hindiLabel}",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = if (uiState.currentAccuracy > 0f) {
@@ -547,30 +653,50 @@ private fun GpsStatusCard(
                             "${strings.accuracy}: ${strings.waiting}"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
+            Spacer(modifier = Modifier.width(8.dp))
+
             if (!uiState.isGpsEnabled) {
-                OutlinedButton(
+                Button(
                     onClick = onEnableGpsClick,
-                    modifier = Modifier.height(34.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.heightIn(min = 38.dp).testTag("enable_gps_button")
                 ) {
-                    Icon(Icons.Default.LocationOff, null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.LocationOff, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(strings.enableGps, fontSize = 11.sp)
+                    Text("GPS चालू करें", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             } else {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
+                    color = when (uiState.gpsQuality) {
+                        GpsQualityLevel.EXCELLENT -> Color(0xFFDCFCE7)
+                        GpsQualityLevel.GOOD -> Color(0xFFECFCCB)
+                        GpsQualityLevel.MEDIUM -> Color(0xFFFEF9C3)
+                        GpsQualityLevel.WEAK -> Color(0xFFFEE2E2)
+                        GpsQualityLevel.UNAVAILABLE -> Color(0xFFE2E8F0)
+                    }
                 ) {
                     Text(
-                        text = if (uiState.isTracking) (if (uiState.isPaused) "Paused" else "Active") else "Ready",
+                        text = if (uiState.isTracking) (if (uiState.isPaused) "विराम (Paused)" else "सक्रिय (Active)") else "तैयार (Ready)",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Bold,
+                        color = when (uiState.gpsQuality) {
+                            GpsQualityLevel.EXCELLENT -> Color(0xFF166534)
+                            GpsQualityLevel.GOOD -> Color(0xFF3F6212)
+                            GpsQualityLevel.MEDIUM -> Color(0xFF854D0E)
+                            GpsQualityLevel.WEAK -> Color(0xFF991B1B)
+                            GpsQualityLevel.UNAVAILABLE -> Color(0xFF475569)
+                        }
                     )
                 }
             }
@@ -590,7 +716,7 @@ private fun AreaMetricsCard(
     val bihar = GeoLandCalculator.convertToBiharUnits(areaSqM, laggiHaath)
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("area_metrics_card"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -599,7 +725,7 @@ private fun AreaMetricsCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = strings.estimatedArea,
                         style = MaterialTheme.typography.labelSmall,
@@ -607,11 +733,15 @@ private fun AreaMetricsCard(
                     )
                     Text(
                         text = bihar.toHindiString(),
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
@@ -632,7 +762,9 @@ private fun AreaMetricsCard(
             Text(
                 text = "${String.format(Locale.US, "%.2f", bihar.acres)} Acres (${String.format(Locale.US, "%.1f", bihar.dismil)} Dismil) • ${String.format(Locale.US, "%.1f", areaSqM)} sq.m",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -647,13 +779,13 @@ private fun AreaMetricsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(5.5, 6.0, 6.5, 7.0).forEach { size ->
                         FilterChip(
                             selected = laggiHaath == size,
                             onClick = { onLaggiChange(size) },
-                            label = { Text("$size", fontSize = 11.sp) },
-                            modifier = Modifier.height(28.dp)
+                            label = { Text("$size", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.heightIn(min = 32.dp)
                         )
                     }
                 }

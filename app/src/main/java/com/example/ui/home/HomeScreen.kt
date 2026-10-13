@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
@@ -107,7 +108,8 @@ fun HomeScreen(
     onNavigateToConverter: () -> Unit,
     onNavigateToServices: () -> Unit,
     onNavigateToHelp: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToManualCalculator: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -263,6 +265,86 @@ fun HomeScreen(
                         strings = strings,
                         onClick = onNavigateToLiveMeasurement
                     )
+                }
+
+                // 3b. ULTRA-SIMPLE FITA / KADI BIHAR MANUAL CALCULATOR CARD
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.5.dp, Color(0xFFC8E6C9)),
+                        shadowElevation = 2.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToManualCalculator() }
+                            .testTag("nav_fita_kadi_calculator")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFE8F5E9),
+                                modifier = Modifier.size(50.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.SquareFoot,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1E5631),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "फीता / कड़ी कैलकुलेटर",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF113824)
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFFE8F5E9)
+                                    ) {
+                                        Text(
+                                            text = "बिहार मानक",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF2E7D32),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(3.dp))
+
+                                Text(
+                                    text = "खेत की ४ मेड़ (उत्तर-दक्षिण-पूरब-पश्चिम) से कट्ठा, धूर और डिसमिल निकालें",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF4A6B53),
+                                    lineHeight = 16.sp
+                                )
+                            }
+
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = Color(0xFF1E5631),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                 }
 
                 // 4. MAIN OPTIONS HEADING
@@ -861,7 +943,9 @@ private fun CustomBottomNavigationBar(
     var showLanguageMenu by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
         contentAlignment = Alignment.BottomCenter
     ) {
         // Dock Bar
@@ -875,7 +959,6 @@ private fun CustomBottomNavigationBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
                     .padding(vertical = 8.dp, horizontal = 16.dp),
                 horizontalArrangement = Arrangement.SpaceAround,
                 verticalAlignment = Alignment.CenterVertically

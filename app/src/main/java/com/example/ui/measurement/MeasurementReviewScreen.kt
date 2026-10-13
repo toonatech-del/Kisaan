@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -100,6 +106,7 @@ fun MeasurementReviewScreen(
     } else 0f
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = { Text(strings.measurementReviewTitle, fontWeight = FontWeight.Bold) },
@@ -118,13 +125,13 @@ fun MeasurementReviewScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp),
+                .padding(paddingValues),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("review_area_card"),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -133,7 +140,7 @@ fun MeasurementReviewScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     strings.finalEstimatedArea,
                                     style = MaterialTheme.typography.labelSmall,
@@ -143,9 +150,11 @@ fun MeasurementReviewScreen(
                                     bihar.toHindiString(),
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.primary,
+                                    softWrap = true
                                 )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer
@@ -162,37 +171,25 @@ fun MeasurementReviewScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Acres / Dismil:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format(Locale.US, "%.3f", bihar.acres)} Acres (${String.format(Locale.US, "%.2f", bihar.dismil)} Dismil)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        }
+                        ReviewMetricRow(
+                            label = "Acres / Dismil:",
+                            value = "${String.format(Locale.US, "%.3f", bihar.acres)} Acres (${String.format(Locale.US, "%.2f", bihar.dismil)} Dismil)"
+                        )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Sq.M / Sq.Ft:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format(Locale.US, "%.1f", uiState.estimatedAreaSqM)} sq.m (${String.format(Locale.US, "%.0f", bihar.sqFeet)} sq.ft)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        }
+                        ReviewMetricRow(
+                            label = "Sq.M / Sq.Ft:",
+                            value = "${String.format(Locale.US, "%.1f", uiState.estimatedAreaSqM)} sq.m (${String.format(Locale.US, "%.0f", bihar.sqFeet)} sq.ft)"
+                        )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Perimeter:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)} meters", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        }
+                        ReviewMetricRow(
+                            label = "Perimeter:",
+                            value = "${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)} meters"
+                        )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("GPS Accuracy:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("±${String.format(Locale.US, "%.1f", avgAccuracy)} m (${uiState.gpsQuality.hindiLabel})", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        }
+                        ReviewMetricRow(
+                            label = "GPS Accuracy:",
+                            value = "±${String.format(Locale.US, "%.1f", avgAccuracy)} m (${uiState.gpsQuality.hindiLabel})"
+                        )
 
                         if (uiState.wasManuallyEdited) {
                             Spacer(modifier = Modifier.height(6.dp))
@@ -303,12 +300,15 @@ fun MeasurementReviewScreen(
                                 }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("confirm_and_save_button"),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .testTag("confirm_and_save_button"),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Icon(Icons.Default.Save, contentDescription = null)
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(strings.confirmAndSave, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(strings.confirmAndSave, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -345,11 +345,14 @@ fun MeasurementReviewScreen(
                                 Toast.makeText(context, "PDF error: ${e.message}", Toast.LENGTH_LONG).show()
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("export_pdf_button")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("export_pdf_button")
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFDC2626))
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(strings.exportPdf, fontWeight = FontWeight.Bold)
+                        Text(strings.exportPdf, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
                     }
                 }
             }
@@ -377,6 +380,33 @@ fun MeasurementReviewScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun ReviewMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1.3f),
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
