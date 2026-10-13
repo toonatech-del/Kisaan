@@ -118,16 +118,73 @@ object GeoLandCalculator {
     }
 
     /**
+     * Checks if line segments of the polygon self-intersect.
+     */
+    fun hasSelfIntersections(points: List<GeoPoint>): Boolean {
+        if (points.size < 4) return false
+        val planePoints = projectToLocalPlane(points)
+        val n = planePoints.size
+        for (i in 0 until n) {
+            val p1 = planePoints[i]
+            val p2 = planePoints[(i + 1) % n]
+            for (j in i + 1 until n) {
+                if (abs(i - j) <= 1 || (i == 0 && j == n - 1)) {
+                    continue
+                }
+                val q1 = planePoints[j]
+                val q2 = planePoints[(j + 1) % n]
+                if (doLineSegmentsIntersect(p1, p2, q1, q2)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Automatically orders polygon coordinates in circular radial angular order around polygon centroid
+     * if the user records non-sequential points (such as bowtie or self-intersecting shapes),
+     * ensuring lines do not cross each other and connect smoothly P1 -> P2 -> ... -> P_N -> P1.
+     */
+    fun orderPointsCircular(points: List<GeoPoint>): List<GeoPoint> {
+        if (points.size <= 3) return points
+        // If already valid without self-intersection, preserve exact user recorded order
+        if (!hasSelfIntersections(points)) {
+            return points
+        }
+        val meanLat = points.map { it.lat }.average()
+        val meanLng = points.map { it.lng }.average()
+        val meanLatRad = Math.toRadians(meanLat)
+
+        // Sort points by polar angle around centroid relative to first point
+        val sorted = points.sortedBy { pt ->
+            val x = (pt.lng - meanLng) * cos(meanLatRad)
+            val y = pt.lat - meanLat
+            atan2(y, x)
+        }.toMutableList()
+
+        // Keep Point #1 (original starting point) as first point in the list
+        val firstPoint = points.first()
+        val firstIdx = sorted.indexOfFirst { it == firstPoint }
+        if (firstIdx > 0) {
+            val rotated = sorted.drop(firstIdx) + sorted.take(firstIdx)
+            return rotated
+        }
+        return sorted
+    }
+
+    /**
      * Calculates the geodesic area of a closed spherical polygon in square meters.
      * Uses spherical excess / trapezoid integration on the WGS84 sphere.
      */
     fun computeSphericalPolygonArea(points: List<GeoPoint>): Double {
         if (points.size < 3) return 0.0
+        val orderedPoints = orderPointsCircular(points)
         var total = 0.0
-        val size = points.size
+        val size = orderedPoints.size
         for (i in 0 until size) {
-            val p1 = points[i]
-            val p2 = points[(i + 1) % size]
+            val p1 = orderedPoints[i]
+            val p2 = orderedPoints[(i + 1) % size]
             val lat1 = Math.toRadians(p1.lat)
             val lat2 = Math.toRadians(p2.lat)
             val lng1 = Math.toRadians(p1.lng)
@@ -200,9 +257,49 @@ object GeoLandCalculator {
     }
 
     /**
+     * Checks if the line segment connecting the last recorded corner (Point #N) to the current
+     * location crosses any previously established boundary segment (P_i -> P_{i+1}).
+     */
+    fun checkLiveSegmentCrosses(points: List<GeoPoint>, currentLoc: GeoPoint): Boolean {
+        if (points.size < 2) return false
+        val allPoints = points + currentLoc
+        val projected = projectToLocalPlane(allPoints)
+        val pLast = projected[points.lastIndex]
+        val pCurr = projected.last()
+
+        // Test against all existing segments except the one ending at points.lastIndex
+        // (which is adjacent and shares the corner vertex)
+        for (i in 0 until points.size - 2) {
+            val q1 = projected[i]
+            val q2 = projected[i + 1]
+            if (doLineSegmentsIntersect(pLast, pCurr, q1, q2)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Converts an azimuth angle (in degrees 0..360) into Hindi/English cardinal direction.
+     */
+    fun getCardinalDirection(azimuthDegrees: Float): String {
+        val norm = ((azimuthDegrees % 360f) + 360f) % 360f
+        return when {
+            norm >= 337.5f || norm < 22.5f -> "उत्तर (North)"
+            norm >= 22.5f && norm < 67.5f -> "उत्तर-पूर्व (NE)"
+            norm >= 67.5f && norm < 112.5f -> "पूर्व (East)"
+            norm >= 112.5f && norm < 157.5f -> "दक्षिण-पूर्व (SE)"
+            norm >= 157.5f && norm < 202.5f -> "दक्षिण (South)"
+            norm >= 202.5f && norm < 247.5f -> "दक्षिण-पश्चिम (SW)"
+            norm >= 247.5f && norm < 292.5f -> "पश्चिम (West)"
+            else -> "उत्तर-पश्चिम (NW)"
+        }
+    }
+
+    /**
      * Tests if line segment (p1->p2) and (q1->q2) strictly intersect.
      */
-    private fun doLineSegmentsIntersect(p1: Point2D, p2: Point2D, q1: Point2D, q2: Point2D): Boolean {
+    fun doLineSegmentsIntersect(p1: Point2D, p2: Point2D, q1: Point2D, q2: Point2D): Boolean {
         fun orientation(a: Point2D, b: Point2D, c: Point2D): Int {
             val valProduct = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
             return when {

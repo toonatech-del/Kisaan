@@ -46,6 +46,7 @@ data class LiveMeasurementUiState(
     val isStabilizing: Boolean = false,
     val userNotice: String? = null,
     val warningMessage: String? = null,
+    val isLineCrossing: Boolean = false,
     val isReadyForReview: Boolean = false,
     val savedMeasurementId: Long? = null,
     val detectedAreaName: String = ""
@@ -121,6 +122,10 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             }
         }
         
+        if (GeoLandCalculator.checkLiveSegmentCrosses(_uiState.value.recordedPoints, newPoint)) {
+            _uiState.update { it.copy(userNotice = "चेतावनी: रेखाएं आपस में कट रही हैं, सही कोने की ओर बढ़ें") }
+        }
+
         val newPoints = _uiState.value.recordedPoints + newPoint
         recalculateAndValidate(newPoints, _uiState.value.isClosed, edited = true)
         
@@ -242,6 +247,20 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         val walkingDistFt = walkingDistM * 3.28084
         val quality = locationTracker.evaluateQuality(location.accuracy)
 
+        val isLineCrossing = if (points.size >= 2 && !_uiState.value.isClosed) {
+            GeoLandCalculator.checkLiveSegmentCrosses(points, currentGeo)
+        } else {
+            false
+        }
+
+        val updatedWarning = if (isLineCrossing) {
+            "चेतावनी: रेखाएं आपस में कट रही हैं, सही कोने की ओर बढ़ें"
+        } else if (_uiState.value.warningMessage == "चेतावनी: रेखाएं आपस में कट रही हैं, सही कोने की ओर बढ़ें") {
+            null
+        } else {
+            _uiState.value.warningMessage
+        }
+
         _uiState.update {
             it.copy(
                 currentLocation = currentGeo,
@@ -249,7 +268,9 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
                 gpsQuality = quality,
                 liveWalkingDistanceM = walkingDistM,
                 liveWalkingDistanceFt = walkingDistFt,
-                estimatedPerimeterM = if (!it.isClosed && points.isNotEmpty()) livePerimeter else it.estimatedPerimeterM
+                estimatedPerimeterM = if (!it.isClosed && points.isNotEmpty()) livePerimeter else it.estimatedPerimeterM,
+                isLineCrossing = isLineCrossing,
+                warningMessage = updatedWarning
             )
         }
         detectAreaName(location)
@@ -265,10 +286,11 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun closeBoundary() {
-        val points = _uiState.value.recordedPoints
-        if (points.size < 3) return
+        val rawPoints = _uiState.value.recordedPoints
+        if (rawPoints.size < 3) return
+        val points = GeoLandCalculator.orderPointsCircular(rawPoints)
         recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
-        _uiState.update { it.copy(isClosed = true, userNotice = "बाउंड्री बंद की गई") }
+        _uiState.update { it.copy(recordedPoints = points, isClosed = true, userNotice = "बाउंड्री बंद की गई") }
     }
 
     fun cancelMeasurement() {
@@ -298,12 +320,13 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun finishMeasurement() {
-        val points = _uiState.value.recordedPoints
-        if (points.size < 3) return
+        val rawPoints = _uiState.value.recordedPoints
+        if (rawPoints.size < 3) return
+        val points = GeoLandCalculator.orderPointsCircular(rawPoints)
         // Mathematically close boundary by connecting the last corner back to Point #1
         recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
         stopTracking()
-        _uiState.update { it.copy(isClosed = true, isReadyForReview = true) }
+        _uiState.update { it.copy(recordedPoints = points, isClosed = true, isReadyForReview = true) }
     }
 
     fun saveMeasurement(title: String, notes: String, onSuccess: (Long) -> Unit) {
@@ -344,45 +367,46 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private fun recalculateAndValidate(points: List<GeoPoint>, isClosed: Boolean, edited: Boolean) {
-        val validation = GeoLandCalculator.validatePolygon(points)
-        val area = surveyEngine.calculateAreaSqMeters(points)
+        val effectivePoints = if (isClosed && points.size >= 3) GeoLandCalculator.orderPointsCircular(points) else points
+        val validation = GeoLandCalculator.validatePolygon(effectivePoints)
+        val area = surveyEngine.calculateAreaSqMeters(effectivePoints)
         
         val currentLoc = latestLocation
         var walkingDistM = 0.0
-        if (points.isNotEmpty() && currentLoc != null) {
+        if (effectivePoints.isNotEmpty() && currentLoc != null) {
             val d = FloatArray(1)
-            Location.distanceBetween(points.last().lat, points.last().lng, currentLoc.latitude, currentLoc.longitude, d)
+            Location.distanceBetween(effectivePoints.last().lat, effectivePoints.last().lng, currentLoc.latitude, currentLoc.longitude, d)
             walkingDistM = d[0].toDouble()
         }
 
         val perimeter = if (isClosed) {
-            surveyEngine.calculatePerimeterMeters(points)
+            surveyEngine.calculatePerimeterMeters(effectivePoints)
         } else {
-            if (points.isNotEmpty() && currentLoc != null) {
+            if (effectivePoints.isNotEmpty() && currentLoc != null) {
                 var recordedEdgesSum = 0.0
-                for (i in 0 until points.size - 1) {
+                for (i in 0 until effectivePoints.size - 1) {
                     val r = FloatArray(1)
-                    Location.distanceBetween(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng, r)
+                    Location.distanceBetween(effectivePoints[i].lat, effectivePoints[i].lng, effectivePoints[i + 1].lat, effectivePoints[i + 1].lng, r)
                     recordedEdgesSum += r[0].toDouble()
                 }
-                val firstPoint = points.first()
+                val firstPoint = effectivePoints.first()
                 val backToStartResults = FloatArray(1)
                 Location.distanceBetween(currentLoc.latitude, currentLoc.longitude, firstPoint.lat, firstPoint.lng, backToStartResults)
                 val distBackToStart = backToStartResults[0].toDouble()
 
-                if (points.size == 1) {
+                if (effectivePoints.size == 1) {
                     walkingDistM
                 } else {
                     recordedEdgesSum + walkingDistM + distBackToStart
                 }
             } else {
-                surveyEngine.calculateOpenPerimeterMeters(points)
+                surveyEngine.calculateOpenPerimeterMeters(effectivePoints)
             }
         }
 
         _uiState.update {
             it.copy(
-                recordedPoints = points,
+                recordedPoints = effectivePoints,
                 isClosed = isClosed,
                 polygonValidation = validation,
                 estimatedAreaSqM = area,

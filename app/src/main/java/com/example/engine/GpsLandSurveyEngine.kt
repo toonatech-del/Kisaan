@@ -29,13 +29,14 @@ class GpsLandSurveyEngine {
     // 2. High-precision Geodesic Polygon Area (combines Spherical Excess on WGS84 ellipsoid radius with planar Shoelace)
     fun calculateAreaSqMeters(points: List<GeoPoint>): Double {
         if (points.size < 3) return 0.0
+        val orderedPoints = com.example.util.GeoLandCalculator.orderPointsCircular(points)
         
         // Spherical excess integration (geodesic standard on WGS84)
         var total = 0.0
-        val size = points.size
+        val size = orderedPoints.size
         for (i in 0 until size) {
-            val p1 = points[i]
-            val p2 = points[(i + 1) % size]
+            val p1 = orderedPoints[i]
+            val p2 = orderedPoints[(i + 1) % size]
             val lat1 = Math.toRadians(p1.lat)
             val lat2 = Math.toRadians(p2.lat)
             val lng1 = Math.toRadians(p1.lng)
@@ -49,7 +50,7 @@ class GpsLandSurveyEngine {
         }
 
         // Fallback to local centroid shoelace
-        val cartesian = projectToLocalPlane(points)
+        val cartesian = projectToLocalPlane(orderedPoints)
         var area = 0.0
         for (i in cartesian.indices) {
             val j = (i + 1) % cartesian.size
@@ -62,13 +63,14 @@ class GpsLandSurveyEngine {
     // 3. True Geodetic Perimeter (Closed loop using Haversine / WGS84 great circle)
     fun calculatePerimeterMeters(points: List<GeoPoint>): Double {
         if (points.size < 2) return 0.0
+        val orderedPoints = if (points.size >= 3) com.example.util.GeoLandCalculator.orderPointsCircular(points) else points
         var perimeter = 0.0
         val results = FloatArray(1)
-        for (i in points.indices) {
-            val next = (i + 1) % points.size
+        for (i in orderedPoints.indices) {
+            val next = (i + 1) % orderedPoints.size
             android.location.Location.distanceBetween(
-                points[i].lat, points[i].lng,
-                points[next].lat, points[next].lng,
+                orderedPoints[i].lat, orderedPoints[i].lng,
+                orderedPoints[next].lat, orderedPoints[next].lng,
                 results
             )
             perimeter += results[0]

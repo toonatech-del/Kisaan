@@ -49,6 +49,9 @@ enum class Screen {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val basePath = applicationContext.filesDir
+        org.osmdroid.config.Configuration.getInstance().osmdroidBasePath = basePath
+        org.osmdroid.config.Configuration.getInstance().osmdroidTileCache = java.io.File(basePath, "osmdroid/tiles")
         org.osmdroid.config.Configuration.getInstance().userAgentValue = packageName
         enableEdgeToEdge()
         setContent {

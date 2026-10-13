@@ -51,6 +51,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.compose.ui.draw.rotate
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.material.icons.filled.Warning
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 import com.example.util.GeoPoint
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -75,22 +85,42 @@ fun OsmLandMapView(
 
     // Initialize osmdroid configuration
     remember {
+        val basePath = context.applicationContext.filesDir
+        Configuration.getInstance().osmdroidBasePath = basePath
+        Configuration.getInstance().osmdroidTileCache = java.io.File(basePath, "osmdroid/tiles")
         Configuration.getInstance().userAgentValue = context.packageName
     }
 
-    val esriSatellite = remember {
-        XYTileSource(
-            "EsriSatellite",
-            0, 19, 256, ".jpg",
-            arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
-        )
+    val googleSatellite = remember {
+        object : org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase(
+            "GoogleSatellite",
+            0, 20, 256, ".jpg",
+            arrayOf(
+                "https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                "https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                "https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+            )
+        ) {
+            override fun getTileURLString(pMapTileIndex: Long): String {
+                val zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
+                val x = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
+                val y = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
+                val baseUrl = baseUrl
+                return baseUrl.replace("{x}", x.toString())
+                              .replace("{y}", y.toString())
+                              .replace("{z}", zoom.toString())
+            }
+        }
     }
 
     var isSatelliteMode by remember { mutableStateOf(true) }
+    var isHeadingFollowMode by remember { mutableStateOf(false) }
+    var smoothedAzimuth by remember { mutableFloatStateOf(0f) }
 
     val mapView = remember {
         MapView(context).apply {
-            setTileSource(esriSatellite)
+            setTileSource(googleSatellite)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(19.0)
@@ -99,22 +129,107 @@ fun OsmLandMapView(
         }
     }
 
-    LaunchedEffect(isSatelliteMode) {
-        mapView.setTileSource(if (isSatelliteMode) esriSatellite else TileSourceFactory.MAPNIK)
+    val sensorManager = remember {
+        context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
     }
 
-    // Handle MapView lifecycle
+    val sensorListener = remember {
+        object : SensorEventListener {
+            private val rotationMatrix = FloatArray(9)
+            private val orientation = FloatArray(3)
+            private var lastAccel: FloatArray? = null
+            private var lastMag: FloatArray? = null
+            private val alpha = 0.18f // Low-pass filter smoothing coefficient
+            private var smoothedSin = 0f
+            private var smoothedCos = 1f
+
+            override fun onSensorChanged(event: SensorEvent) {
+                var azimuthRad: Float? = null
+
+                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    SensorManager.getOrientation(rotationMatrix, orientation)
+                    azimuthRad = orientation[0]
+                } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                    lastAccel = event.values.clone()
+                } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                    lastMag = event.values.clone()
+                }
+
+                if (azimuthRad == null && lastAccel != null && lastMag != null) {
+                    val r = FloatArray(9)
+                    val i = FloatArray(9)
+                    if (SensorManager.getRotationMatrix(r, i, lastAccel, lastMag)) {
+                        SensorManager.getOrientation(r, orientation)
+                        azimuthRad = orientation[0]
+                    }
+                }
+
+                azimuthRad?.let { rad ->
+                    // Circular low-pass filter on unit vector to prevent 0°/360° jump jitter
+                    val s = sin(rad.toDouble()).toFloat()
+                    val c = cos(rad.toDouble()).toFloat()
+                    smoothedSin = (alpha * s) + ((1f - alpha) * smoothedSin)
+                    smoothedCos = (alpha * c) + ((1f - alpha) * smoothedCos)
+                    val deg = ((Math.toDegrees(atan2(smoothedSin.toDouble(), smoothedCos.toDouble())).toFloat()) + 360f) % 360f
+                    smoothedAzimuth = deg
+
+                    if (isHeadingFollowMode) {
+                        mapView.mapOrientation = -deg
+                    }
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+    }
+
+    LaunchedEffect(isSatelliteMode) {
+        mapView.setTileSource(if (isSatelliteMode) googleSatellite else TileSourceFactory.MAPNIK)
+    }
+
+    // Handle MapView and Sensor lifecycle (onResume / onPause to save battery)
     DisposableEffect(lifecycleOwner, mapView) {
+        val rotSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val accSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val magSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+
+        fun registerSensors() {
+            if (sensorManager == null) return
+            if (rotSensor != null) {
+                sensorManager.registerListener(sensorListener, rotSensor, SensorManager.SENSOR_DELAY_UI)
+            } else {
+                accSensor?.let { sensorManager.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI) }
+                magSensor?.let { sensorManager.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI) }
+            }
+        }
+
+        fun unregisterSensors() {
+            sensorManager?.unregisterListener(sensorListener)
+        }
+
+        registerSensors()
+
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_DESTROY -> mapView.onDetach()
+                Lifecycle.Event.ON_RESUME -> {
+                    mapView.onResume()
+                    registerSensors()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    mapView.onPause()
+                    unregisterSensors()
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    unregisterSensors()
+                    mapView.onDetach()
+                }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            unregisterSensors()
             lifecycleOwner.lifecycle.removeObserver(observer)
             mapView.onDetach()
         }
@@ -130,19 +245,21 @@ fun OsmLandMapView(
         }
     }
 
-    // Redraw markers, polylines, edge annotations, and polygon whenever points or currentLocation change
-    LaunchedEffect(points, currentLocation, isClosed) {
+    // Redraw markers, polylines, edge annotations, and polygon whenever points, location, or heading change
+    LaunchedEffect(points, currentLocation, isClosed, isHeadingFollowMode, (smoothedAzimuth.toInt() / 4)) {
         mapView.overlays.clear()
 
+        val displayPoints = if (isClosed && points.size >= 3) com.example.util.GeoLandCalculator.orderPointsCircular(points) else points
+
         // 1. Draw recorded points polygon / polyline
-        if (points.size >= 3) {
+        if (displayPoints.size >= 3) {
             if (isClosed) {
                 val polygon = Polygon(mapView).apply {
                     outlinePaint.color = AndroidColor.parseColor("#15803D") // Dark Green
                     outlinePaint.strokeWidth = 6f
                     fillPaint.color = AndroidColor.parseColor("#3316A34A") // 20% Alpha Green
                     
-                    val osmPoints = points.map { OsmGeoPoint(it.lat, it.lng) }
+                    val osmPoints = displayPoints.map { OsmGeoPoint(it.lat, it.lng) }
                     // Mathematically close boundary by connecting the last corner back to Point #1
                     setPoints(osmPoints + osmPoints.first())
                     title = "Field Boundary"
@@ -153,24 +270,25 @@ fun OsmLandMapView(
                 val polyline = Polyline(mapView).apply {
                     outlinePaint.color = AndroidColor.parseColor("#15803D")
                     outlinePaint.strokeWidth = 6f
-                    setPoints(points.map { OsmGeoPoint(it.lat, it.lng) })
+                    setPoints(displayPoints.map { OsmGeoPoint(it.lat, it.lng) })
                 }
                 mapView.overlays.add(polyline)
             }
-        } else if (points.size == 2) {
+        } else if (displayPoints.size == 2) {
             val polyline = Polyline(mapView).apply {
                 outlinePaint.color = AndroidColor.parseColor("#15803D")
                 outlinePaint.strokeWidth = 6f
-                setPoints(points.map { OsmGeoPoint(it.lat, it.lng) })
+                setPoints(displayPoints.map { OsmGeoPoint(it.lat, it.lng) })
             }
             mapView.overlays.add(polyline)
         }
 
         // 2. Draw live walking guidance line from last recorded corner to current live location
         if (!isClosed && points.isNotEmpty() && currentLocation != null) {
+            val isCrossing = com.example.util.GeoLandCalculator.checkLiveSegmentCrosses(points, currentLocation)
             val walkingLine = Polyline(mapView).apply {
-                outlinePaint.color = AndroidColor.parseColor("#0284C7") // Sky blue dashed line
-                outlinePaint.strokeWidth = 5f
+                outlinePaint.color = if (isCrossing) AndroidColor.parseColor("#DC2626") else AndroidColor.parseColor("#0284C7")
+                outlinePaint.strokeWidth = if (isCrossing) 8f else 5f
                 outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 12f), 0f)
                 setPoints(
                     listOf(
@@ -183,10 +301,10 @@ fun OsmLandMapView(
         }
 
         // 3. Side Length Labels on Map Boundary Lines (Edge Annotations at midpoints)
-        if (points.size >= 2) {
-            for (i in 0 until points.size - 1) {
-                val p1 = points[i]
-                val p2 = points[i + 1]
+        if (displayPoints.size >= 2) {
+            for (i in 0 until displayPoints.size - 1) {
+                val p1 = displayPoints[i]
+                val p2 = displayPoints[i + 1]
                 val midLat = (p1.lat + p2.lat) / 2.0
                 val midLng = (p1.lng + p2.lng) / 2.0
                 val edgeResults = FloatArray(1)
@@ -209,9 +327,9 @@ fun OsmLandMapView(
         }
 
         // If boundary closed, also annotate the closing edge from last point back to Point #1
-        if (isClosed && points.size >= 3) {
-            val pLast = points.last()
-            val pFirst = points.first()
+        if (isClosed && displayPoints.size >= 3) {
+            val pLast = displayPoints.last()
+            val pFirst = displayPoints.first()
             val midLat = (pLast.lat + pFirst.lat) / 2.0
             val midLng = (pLast.lng + pFirst.lng) / 2.0
             val closeResults = FloatArray(1)
@@ -223,7 +341,7 @@ fun OsmLandMapView(
             val closeMarker = Marker(mapView).apply {
                 position = OsmGeoPoint(midLat, midLng)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                title = "अंतिम भुजा"
+                title = "भुजा #${displayPoints.size}"
                 snippet = label
                 icon = createEdgeBadgeDrawable(context, label, isLive = false)
                 infoWindow = null
@@ -241,14 +359,15 @@ fun OsmLandMapView(
             android.location.Location.distanceBetween(pLast.lat, pLast.lng, currentLocation.lat, currentLocation.lng, liveResults)
             val distM = liveResults[0]
             val distFt = distM * 3.28084f
-            val liveLabel = "चालू: ${String.format(java.util.Locale.US, "%.1f", distM)} m | ${String.format(java.util.Locale.US, "%.1f", distFt)} ft"
+            val isCrossing = com.example.util.GeoLandCalculator.checkLiveSegmentCrosses(points, currentLocation)
+            val liveLabel = if (isCrossing) "काट रही है! ${String.format(java.util.Locale.US, "%.1f", distM)}m" else "चालू: ${String.format(java.util.Locale.US, "%.1f", distM)} m | ${String.format(java.util.Locale.US, "%.1f", distFt)} ft"
 
             val liveEdgeMarker = Marker(mapView).apply {
                 position = OsmGeoPoint(midLat, midLng)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 title = "वर्तमान दूरी"
                 snippet = liveLabel
-                icon = createEdgeBadgeDrawable(context, liveLabel, isLive = true)
+                icon = createEdgeBadgeDrawable(context, liveLabel, isLive = true, isWarning = isCrossing)
                 infoWindow = null
                 isDraggable = false
             }
@@ -256,7 +375,8 @@ fun OsmLandMapView(
         }
 
         // 4. Add draggable markers for every recorded corner
-        points.forEachIndexed { index, pt ->
+        displayPoints.forEachIndexed { index, pt ->
+            val origIndex = points.indexOf(pt).let { if (it >= 0) it else index }
             val marker = Marker(mapView).apply {
                 position = OsmGeoPoint(pt.lat, pt.lng)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -272,7 +392,7 @@ fun OsmLandMapView(
                     override fun onMarkerDrag(m: Marker?) {}
                     override fun onMarkerDragEnd(m: Marker?) {
                         m?.position?.let { newPos ->
-                            onPointMoved(index, newPos.latitude, newPos.longitude)
+                            onPointMoved(origIndex, newPos.latitude, newPos.longitude)
                         }
                     }
                 })
@@ -280,15 +400,16 @@ fun OsmLandMapView(
             mapView.overlays.add(marker)
         }
 
-        // 5. Current Live GPS Marker
+        // 5. Current Live GPS Marker with Directional Flashlight Cone / Beam
         if (currentLocation != null) {
+            val beamAngle = if (isHeadingFollowMode) 0f else smoothedAzimuth
             val liveMarker = Marker(mapView).apply {
                 position = OsmGeoPoint(currentLocation.lat, currentLocation.lng)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 title = "आपकी लाइव लोकेशन"
                 snippet = "Accuracy: ±${String.format(java.util.Locale.US, "%.1f", currentLocation.accuracy)}m"
                 isDraggable = false
-                icon = createLiveLocationDrawable(context)
+                icon = createLiveLocationDrawable(context, beamAngle)
             }
             mapView.overlays.add(liveMarker)
         }
@@ -350,28 +471,39 @@ fun OsmLandMapView(
 
         // Top North Compass Indicator - Top-End
         Surface(
+            onClick = {
+                isHeadingFollowMode = !isHeadingFollowMode
+                if (!isHeadingFollowMode) {
+                    mapView.mapOrientation = 0f
+                    currentLocation?.let {
+                        mapView.controller.animateTo(OsmGeoPoint(it.lat, it.lng))
+                    }
+                }
+            },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(12.dp)
                 .testTag("north_compass_badge"),
             shape = RoundedCornerShape(8.dp),
-            color = Color(0xF2FFFFFF),
-            border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+            color = if (isHeadingFollowMode) Color(0xFFEFF6FF) else Color(0xF2FFFFFF),
+            border = BorderStroke(1.dp, if (isHeadingFollowMode) Color(0xFF3B82F6) else Color(0xFFE0E0E0)),
             shadowElevation = 3.dp
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Default.Navigation,
                     contentDescription = "उत्तर दिशा (North)",
                     tint = Color(0xFFDC2626),
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier
+                        .size(16.dp)
+                        .rotate(if (isHeadingFollowMode) smoothedAzimuth else 0f)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "उत्तर (N)",
+                    text = if (isHeadingFollowMode) "लाइव दिशा" else "उत्तर (N)",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1E293B)
@@ -558,13 +690,29 @@ private fun createCornerMarkerDrawable(context: Context, index: Int): android.gr
     return android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
 }
 
-private fun createLiveLocationDrawable(context: Context): android.graphics.drawable.Drawable {
-    val sizePx = (24 * context.resources.displayMetrics.density).toInt()
+private fun createLiveLocationDrawable(context: Context, heading: Float = 0f): android.graphics.drawable.Drawable {
+    val sizePx = (36 * context.resources.displayMetrics.density).toInt()
     val bitmap = android.graphics.Bitmap.createBitmap(sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
 
+    canvas.save()
+    canvas.rotate(heading, sizePx / 2f, sizePx / 2f)
+
+    val conePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.argb(70, 2, 132, 199)
+        style = android.graphics.Paint.Style.FILL
+    }
+    val path = android.graphics.Path().apply {
+        moveTo(sizePx / 2f, sizePx / 2f)
+        lineTo(sizePx / 2f - 12f, 4f)
+        lineTo(sizePx / 2f + 12f, 4f)
+        close()
+    }
+    canvas.drawPath(path, conePaint)
+    canvas.restore()
+
     val bluePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#0284C7") // Sky blue
+        color = AndroidColor.parseColor("#0284C7")
         style = android.graphics.Paint.Style.FILL
     }
     val whitePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
@@ -574,18 +722,20 @@ private fun createLiveLocationDrawable(context: Context): android.graphics.drawa
     val strokePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = AndroidColor.WHITE
         style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 4f
+        strokeWidth = 3f
     }
 
-    val radius = sizePx / 2f - 2f
-    canvas.drawCircle(sizePx / 2f, sizePx / 2f, radius, bluePaint)
-    canvas.drawCircle(sizePx / 2f, sizePx / 2f, radius, strokePaint)
-    canvas.drawCircle(sizePx / 2f, sizePx / 2f, 4f * context.resources.displayMetrics.density, whitePaint)
+    val cx = sizePx / 2f
+    val cy = sizePx / 2f
+    val r = 10f * context.resources.displayMetrics.density
+    canvas.drawCircle(cx, cy, r, bluePaint)
+    canvas.drawCircle(cx, cy, r, strokePaint)
+    canvas.drawCircle(cx, cy, 3.5f * context.resources.displayMetrics.density, whitePaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
 }
 
-private fun createEdgeBadgeDrawable(context: Context, text: String, isLive: Boolean = false): android.graphics.drawable.Drawable {
+private fun createEdgeBadgeDrawable(context: Context, text: String, isLive: Boolean = false, isWarning: Boolean = false): android.graphics.drawable.Drawable {
     val density = context.resources.displayMetrics.density
     val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = AndroidColor.WHITE
@@ -607,7 +757,11 @@ private fun createEdgeBadgeDrawable(context: Context, text: String, isLive: Bool
     val canvas = android.graphics.Canvas(bitmap)
 
     val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (isLive) AndroidColor.parseColor("#E60284C7") else AndroidColor.parseColor("#E61E5631")
+        color = when {
+            isWarning -> AndroidColor.parseColor("#E6DC2626")
+            isLive -> AndroidColor.parseColor("#E60284C7")
+            else -> AndroidColor.parseColor("#E61E5631")
+        }
         style = android.graphics.Paint.Style.FILL
     }
     val borderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {

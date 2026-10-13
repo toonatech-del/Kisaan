@@ -121,11 +121,12 @@ fun SchematicPlotView(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
-                .pointerInput(points) {
+                .pointerInput(points, isClosed) {
                     detectTapGestures { tapOffset ->
                         // Hit detection for points
                         if (points.isNotEmpty()) {
-                            val allPoints = if (currentLocation != null) points + currentLocation else points
+                            val effectivePoints = if (isClosed && points.size >= 3) GeoLandCalculator.orderPointsCircular(points) else points
+                            val allPoints = if (currentLocation != null) effectivePoints + currentLocation else effectivePoints
                             val localPoints = GeoLandCalculator.projectToLocalPlane(allPoints)
                             if (localPoints.isNotEmpty()) {
                                 val (minX, maxX, minY, maxY) = computeBounds(localPoints)
@@ -135,7 +136,7 @@ fun SchematicPlotView(
                                 val offsetX = ((size.width - widthSpan.toFloat() * scale) / 2f) - (minX.toFloat() * scale)
                                 val offsetY = ((size.height - heightSpan.toFloat() * scale) / 2f) + (maxY.toFloat() * scale)
 
-                                points.forEachIndexed { index, _ ->
+                                effectivePoints.forEachIndexed { index, _ ->
                                     val pt2d = localPoints[index]
                                     val px = pt2d.x.toFloat() * scale + offsetX
                                     val py = offsetY - pt2d.y.toFloat() * scale
@@ -162,9 +163,10 @@ fun SchematicPlotView(
             }
 
             // Project all coordinates to local metric plane
-            val allForProjection = if (currentLocation != null) points + currentLocation else points
+            val effectivePoints = if (isClosed && points.size >= 3) GeoLandCalculator.orderPointsCircular(points) else points
+            val allForProjection = if (currentLocation != null) effectivePoints + currentLocation else effectivePoints
             val projected = GeoLandCalculator.projectToLocalPlane(allForProjection)
-            val boundaryProjected = projected.take(points.size)
+            val boundaryProjected = projected.take(effectivePoints.size)
             val currentProjected = if (currentLocation != null) projected.last() else null
 
             val (minX, maxX, minY, maxY) = computeBounds(projected)
@@ -219,16 +221,15 @@ fun SchematicPlotView(
                     )
                 }
 
-                // If closed, draw closing segment
+                // If closed, draw closing segment directly back to first point (P_N -> P1)
                 if (isClosed && boundaryProjected.size >= 3) {
                     val pLast = toCanvasOffset(boundaryProjected.last())
                     val pFirst = toCanvasOffset(boundaryProjected.first())
                     drawLine(
-                        color = amberColor,
+                        color = greenColor,
                         start = pLast,
                         end = pFirst,
                         strokeWidth = 5f,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
                         cap = StrokeCap.Round
                     )
                 }
@@ -239,12 +240,10 @@ fun SchematicPlotView(
                 val offset = toCanvasOffset(p2d)
                 val isSelected = selectedPointIndex == index
                 val isFirst = index == 0
-                val isLast = isClosed && index == boundaryProjected.size - 1
 
                 val pointColor = when {
                     isSelected -> Color(0xFFEF4444)
                     isFirst -> Color(0xFF16A34A) // START green
-                    isLast -> Color(0xFFD97706)  // END amber
                     else -> greenColor
                 }
 
@@ -260,11 +259,7 @@ fun SchematicPlotView(
                 )
 
                 // Label text / badge
-                val labelText = when {
-                    isFirst -> "START"
-                    isLast -> "END"
-                    else -> "${index + 1}"
-                }
+                val labelText = if (isFirst) "START" else "${index + 1}"
 
                 val paint = android.graphics.Paint().apply {
                     color = android.graphics.Color.WHITE
@@ -286,11 +281,7 @@ fun SchematicPlotView(
                     isFakeBoldText = true
                     textAlign = android.graphics.Paint.Align.CENTER
                 }
-                val subText = when {
-                    isFirst -> "शुरू (START)"
-                    isLast -> "अंतिम (END)"
-                    else -> "बिंदु ${index + 1}"
-                }
+                val subText = if (isFirst) "शुरू (START)" else "बिंदु ${index + 1}"
                 drawContext.canvas.nativeCanvas.drawText(
                     subText,
                     offset.x,
@@ -518,11 +509,6 @@ fun SchematicPlotView(
                         Box(modifier = Modifier.size(8.dp).background(greenColor, CircleShape))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("बिंदु (Vertex)", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(8.dp).background(Color(0xFFD97706), CircleShape))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("END / अंतिम", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(8.dp).background(Color(0xFF0284C7), CircleShape))
