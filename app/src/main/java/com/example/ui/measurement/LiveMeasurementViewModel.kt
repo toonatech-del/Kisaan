@@ -42,7 +42,6 @@ data class LiveMeasurementUiState(
     val linkedLandCase: LandCaseEntity? = null,
     val wasManuallyEdited: Boolean = false,
     val isStabilizing: Boolean = false,
-    val goodFixCount: Int = 0,
     val userNotice: String? = null,
     val warningMessage: String? = null,
     val isReadyForReview: Boolean = false,
@@ -57,7 +56,6 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     private val locationTracker = LocationTracker(application)
     private val surveyEngine = GpsLandSurveyEngine()
     private val cornerSamples = mutableListOf<Location>()
-    private var goodFixCount = 0
 
     private val _uiState = MutableStateFlow(LiveMeasurementUiState())
     val uiState: StateFlow<LiveMeasurementUiState> = _uiState.asStateFlow()
@@ -101,14 +99,11 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     fun addCornerRequested() {
         if (_uiState.value.isPaused) return
         
-        val now = SystemClock.elapsedRealtimeNanos()
         val loc = latestLocation
-        
-        if (loc != null && (now - loc.elapsedRealtimeNanos) < 2_500_000_000L && loc.accuracy <= 4.5f) {
+        if (loc != null) {
             addPoint(GeoPoint(loc.latitude, loc.longitude, loc.accuracy))
         } else {
-            _uiState.update { it.copy(isStabilizing = true, userNotice = "कोना स्थिर हो रहा है... [0/3 samples]") }
-            cornerSamples.clear()
+            _uiState.update { it.copy(warningMessage = "GPS signal abhi kamzor hai, thoda aur wait karein.") }
         }
     }
     
@@ -127,8 +122,10 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         recalculateAndValidate(newPoints, _uiState.value.isClosed, edited = true)
         
         // Vibrate
-        val vibrator = getApplication<Application>().getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-        vibrator.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+        val vibrator = getApplication<Application>().getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (vibrator?.hasVibrator() == true) {
+            vibrator.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+        }
     }
 
     fun startTracking() {
@@ -173,35 +170,7 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private fun processLocationUpdate(location: Location) {
-        if (location.hasAccuracy() && location.accuracy <= 4.5f) {
-            latestLocation = location
-        }
-
-        val state = _uiState.value
-
-        if (state.isStabilizing) {
-            cornerSamples.add(location)
-            _uiState.update { it.copy(userNotice = "कोना स्थिर हो रहा है... [${cornerSamples.size}/3 samples]") }
-            if (cornerSamples.size >= 3) {
-                val meanLat = cornerSamples.map { it.latitude }.average()
-                val meanLng = cornerSamples.map { it.longitude }.average()
-                val meanAcc = cornerSamples.map { it.accuracy }.average().toFloat()
-                
-                val stabilizedPoint = GeoPoint(meanLat, meanLng, meanAcc)
-                
-                val newPoints = state.recordedPoints + stabilizedPoint
-                recalculateAndValidate(newPoints, state.isClosed, edited = true)
-
-                _uiState.update { 
-                    it.copy(
-                        isStabilizing = false,
-                        userNotice = "कोना दर्ज हो गया।"
-                    ) 
-                }
-                cornerSamples.clear()
-            }
-            return
-        }
+        latestLocation = location
         
         val currentGeo = GeoPoint(
             lat = location.latitude,

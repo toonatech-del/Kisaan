@@ -345,7 +345,7 @@ fun LiveMeasurementScreen(
                                 contentColor = Color.White,
                                 disabledContentColor = Color(0xFF757575)
                             ),
-                            enabled = if (uiState.recordedPoints.isEmpty()) uiState.goodFixCount >= 3 else true
+                            enabled = uiState.currentAccuracy <= 8.0f
                         ) {
                             Icon(Icons.Default.AddLocation, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -541,15 +541,13 @@ private fun GpsStatusCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (uiState.goodFixCount < 3) {
-                            "GPS Satellite Fix ho raha hai... Ek jagah khade rahein (${uiState.goodFixCount}/3) [±${String.format(Locale.US, "%.1f", uiState.currentAccuracy)}m]"
-                        } else if (uiState.currentAccuracy > 0f) {
+                        text = if (uiState.currentAccuracy > 0f) {
                             "${strings.accuracy}: ±${String.format(Locale.US, "%.1f", uiState.currentAccuracy)} m"
                         } else {
                             "${strings.accuracy}: ${strings.waiting}"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (uiState.goodFixCount < 3) Color(0xFF991B1B) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

@@ -1,5 +1,6 @@
 package com.example.ui.measurement
 
+import androidx.activity.compose.BackHandler
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -77,6 +78,8 @@ fun MeasurementReviewScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val strings = AppStrings.get(currentLanguage)
+
+    BackHandler(onBack = onNavigateBack)
 
     var title by remember {
         mutableStateOf(
