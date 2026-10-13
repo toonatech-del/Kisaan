@@ -4,24 +4,44 @@ import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.graphics.drawable.GradientDrawable
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +54,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.example.util.GeoPoint
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
@@ -57,15 +78,29 @@ fun OsmLandMapView(
         Configuration.getInstance().userAgentValue = context.packageName
     }
 
+    val esriSatellite = remember {
+        XYTileSource(
+            "EsriSatellite",
+            0, 19, 256, ".jpg",
+            arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
+        )
+    }
+
+    var isSatelliteMode by remember { mutableStateOf(true) }
+
     val mapView = remember {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(esriSatellite)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(19.0)
             isHorizontalMapRepetitionEnabled = false
             isVerticalMapRepetitionEnabled = false
         }
+    }
+
+    LaunchedEffect(isSatelliteMode) {
+        mapView.setTileSource(if (isSatelliteMode) esriSatellite else TileSourceFactory.MAPNIK)
     }
 
     // Handle MapView lifecycle
@@ -95,24 +130,33 @@ fun OsmLandMapView(
         }
     }
 
-    // Redraw markers, polylines, and polygon whenever points or currentLocation change
+    // Redraw markers, polylines, edge annotations, and polygon whenever points or currentLocation change
     LaunchedEffect(points, currentLocation, isClosed) {
         mapView.overlays.clear()
 
         // 1. Draw recorded points polygon / polyline
         if (points.size >= 3) {
-            val polygon = Polygon(mapView).apply {
-                outlinePaint.color = AndroidColor.parseColor("#15803D") // Dark Green
-                outlinePaint.strokeWidth = 6f
-                fillPaint.color = AndroidColor.parseColor("#3316A34A") // 20% Alpha Green
-                
-                val osmPoints = points.map { OsmGeoPoint(it.lat, it.lng) }
-                // Connect in strict order [P1, P2, ... P_N, P1]
-                val closedPoints = if (isClosed) osmPoints + osmPoints.first() else osmPoints
-                setPoints(closedPoints)
-                title = "Field Boundary"
+            if (isClosed) {
+                val polygon = Polygon(mapView).apply {
+                    outlinePaint.color = AndroidColor.parseColor("#15803D") // Dark Green
+                    outlinePaint.strokeWidth = 6f
+                    fillPaint.color = AndroidColor.parseColor("#3316A34A") // 20% Alpha Green
+                    
+                    val osmPoints = points.map { OsmGeoPoint(it.lat, it.lng) }
+                    // Mathematically close boundary by connecting the last corner back to Point #1
+                    setPoints(osmPoints + osmPoints.first())
+                    title = "Field Boundary"
+                }
+                mapView.overlays.add(polygon)
+            } else {
+                // While still recording corners (4, 5, 6, N corners), only draw open perimeter line
+                val polyline = Polyline(mapView).apply {
+                    outlinePaint.color = AndroidColor.parseColor("#15803D")
+                    outlinePaint.strokeWidth = 6f
+                    setPoints(points.map { OsmGeoPoint(it.lat, it.lng) })
+                }
+                mapView.overlays.add(polyline)
             }
-            mapView.overlays.add(polygon)
         } else if (points.size == 2) {
             val polyline = Polyline(mapView).apply {
                 outlinePaint.color = AndroidColor.parseColor("#15803D")
@@ -122,7 +166,96 @@ fun OsmLandMapView(
             mapView.overlays.add(polyline)
         }
 
-        // 2. Add draggable markers for every recorded corner
+        // 2. Draw live walking guidance line from last recorded corner to current live location
+        if (!isClosed && points.isNotEmpty() && currentLocation != null) {
+            val walkingLine = Polyline(mapView).apply {
+                outlinePaint.color = AndroidColor.parseColor("#0284C7") // Sky blue dashed line
+                outlinePaint.strokeWidth = 5f
+                outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 12f), 0f)
+                setPoints(
+                    listOf(
+                        OsmGeoPoint(points.last().lat, points.last().lng),
+                        OsmGeoPoint(currentLocation.lat, currentLocation.lng)
+                    )
+                )
+            }
+            mapView.overlays.add(walkingLine)
+        }
+
+        // 3. Side Length Labels on Map Boundary Lines (Edge Annotations at midpoints)
+        if (points.size >= 2) {
+            for (i in 0 until points.size - 1) {
+                val p1 = points[i]
+                val p2 = points[i + 1]
+                val midLat = (p1.lat + p2.lat) / 2.0
+                val midLng = (p1.lng + p2.lng) / 2.0
+                val edgeResults = FloatArray(1)
+                android.location.Location.distanceBetween(p1.lat, p1.lng, p2.lat, p2.lng, edgeResults)
+                val distM = edgeResults[0]
+                val distFt = distM * 3.28084f
+                val label = "${String.format(java.util.Locale.US, "%.1f", distM)} m | ${String.format(java.util.Locale.US, "%.1f", distFt)} ft"
+
+                val edgeMarker = Marker(mapView).apply {
+                    position = OsmGeoPoint(midLat, midLng)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    title = "भुजा #${i + 1}"
+                    snippet = label
+                    icon = createEdgeBadgeDrawable(context, label, isLive = false)
+                    infoWindow = null
+                    isDraggable = false
+                }
+                mapView.overlays.add(edgeMarker)
+            }
+        }
+
+        // If boundary closed, also annotate the closing edge from last point back to Point #1
+        if (isClosed && points.size >= 3) {
+            val pLast = points.last()
+            val pFirst = points.first()
+            val midLat = (pLast.lat + pFirst.lat) / 2.0
+            val midLng = (pLast.lng + pFirst.lng) / 2.0
+            val closeResults = FloatArray(1)
+            android.location.Location.distanceBetween(pLast.lat, pLast.lng, pFirst.lat, pFirst.lng, closeResults)
+            val distM = closeResults[0]
+            val distFt = distM * 3.28084f
+            val label = "${String.format(java.util.Locale.US, "%.1f", distM)} m | ${String.format(java.util.Locale.US, "%.1f", distFt)} ft"
+
+            val closeMarker = Marker(mapView).apply {
+                position = OsmGeoPoint(midLat, midLng)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                title = "अंतिम भुजा"
+                snippet = label
+                icon = createEdgeBadgeDrawable(context, label, isLive = false)
+                infoWindow = null
+                isDraggable = false
+            }
+            mapView.overlays.add(closeMarker)
+        }
+
+        // Live walking distance label on current in-progress segment (Point #N to current location)
+        if (!isClosed && points.isNotEmpty() && currentLocation != null) {
+            val pLast = points.last()
+            val midLat = (pLast.lat + currentLocation.lat) / 2.0
+            val midLng = (pLast.lng + currentLocation.lng) / 2.0
+            val liveResults = FloatArray(1)
+            android.location.Location.distanceBetween(pLast.lat, pLast.lng, currentLocation.lat, currentLocation.lng, liveResults)
+            val distM = liveResults[0]
+            val distFt = distM * 3.28084f
+            val liveLabel = "चालू: ${String.format(java.util.Locale.US, "%.1f", distM)} m | ${String.format(java.util.Locale.US, "%.1f", distFt)} ft"
+
+            val liveEdgeMarker = Marker(mapView).apply {
+                position = OsmGeoPoint(midLat, midLng)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                title = "वर्तमान दूरी"
+                snippet = liveLabel
+                icon = createEdgeBadgeDrawable(context, liveLabel, isLive = true)
+                infoWindow = null
+                isDraggable = false
+            }
+            mapView.overlays.add(liveEdgeMarker)
+        }
+
+        // 4. Add draggable markers for every recorded corner
         points.forEachIndexed { index, pt ->
             val marker = Marker(mapView).apply {
                 position = OsmGeoPoint(pt.lat, pt.lng)
@@ -147,7 +280,7 @@ fun OsmLandMapView(
             mapView.overlays.add(marker)
         }
 
-        // 3. Current Live GPS Marker
+        // 5. Current Live GPS Marker
         if (currentLocation != null) {
             val liveMarker = Marker(mapView).apply {
                 position = OsmGeoPoint(currentLocation.lat, currentLocation.lng)
@@ -165,42 +298,229 @@ fun OsmLandMapView(
 
     Box(
         modifier = modifier
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
             .testTag("osmdroid_map_view")
     ) {
         AndroidView(
-            factory = { mapView },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // Center on Location Button
-        SmallFloatingActionButton(
-            onClick = {
-                val target = when {
-                    currentLocation != null -> OsmGeoPoint(currentLocation.lat, currentLocation.lng)
-                    points.isNotEmpty() -> OsmGeoPoint(points.last().lat, points.last().lng)
-                    else -> null
-                }
-                target?.let {
-                    mapView.controller.animateTo(it)
-                    mapView.controller.setZoom(19.0)
-                } ?: run {
-                    Toast.makeText(context, "GPS location not available yet", Toast.LENGTH_SHORT).show()
+            factory = {
+                mapView.apply {
+                    clipToOutline = true
                 }
             },
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(12.dp)
-                .testTag("recenter_map_button"),
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.primary
-        ) {
-            Icon(
-                imageVector = Icons.Default.MyLocation,
-                contentDescription = "My Location",
-                modifier = Modifier.size(20.dp)
+                .fillMaxSize()
+                .clip(RoundedCornerShape(16.dp))
+        )
+
+        // Floating Live Distance Badge (From Last Recorded Corner) - Top-Start
+        if (points.isNotEmpty() && currentLocation != null) {
+            val distResults = FloatArray(1)
+            android.location.Location.distanceBetween(
+                points.last().lat, points.last().lng,
+                currentLocation.lat, currentLocation.lng,
+                distResults
             )
+            val distM = distResults[0]
+            val distFt = distM * 3.28084f
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+                    .testTag("floating_live_distance_badge"),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xF2FFFFFF),
+                border = BorderStroke(1.5.dp, Color(0xFF16A34A)),
+                shadowElevation = 3.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📏 वर्तमान दूरी: ${String.format(java.util.Locale.US, "%.1f", distM)} m (${String.format(java.util.Locale.US, "%.1f", distFt)} फ़ीट)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF166534)
+                    )
+                }
+            }
+        }
+
+        // Top North Compass Indicator - Top-End
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+                .testTag("north_compass_badge"),
+            shape = RoundedCornerShape(8.dp),
+            color = Color(0xF2FFFFFF),
+            border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+            shadowElevation = 3.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Navigation,
+                    contentDescription = "उत्तर दिशा (North)",
+                    tint = Color(0xFFDC2626),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "उत्तर (N)",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1E293B)
+                )
+            }
+        }
+
+        var showLegend by remember { mutableStateOf(false) }
+
+        // Unobtrusive Legend Button & Popup - Bottom-Start
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(12.dp)
+        ) {
+            if (!showLegend) {
+                Surface(
+                    onClick = { showLegend = true },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xF2FFFFFF),
+                    border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.testTag("legend_toggle_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "संकेत सूची (Legend)",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "संकेत / Legend",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF1E293B)
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xF7FFFFFF),
+                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.testTag("legend_overlay_popup")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "मानचित्र संकेत (Legend)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { showLegend = false },
+                                tint = Color.Gray
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(8.dp).background(Color(0xFF16A34A), CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("START (पहला कोना)", fontSize = 10.sp, color = Color(0xFF1E293B))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(8.dp).background(Color(0xFF15803D), CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("कोना / Vertex", fontSize = 10.sp, color = Color(0xFF1E293B))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(8.dp).background(Color(0xFF0284C7), CircleShape))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("लाइव GPS लोकेशन", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floating Map Controls (Satellite Layer Toggle & Center My Location) - Bottom-End
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.End
+        ) {
+            // Layer Switcher (Satellite vs Mapnik)
+            SmallFloatingActionButton(
+                onClick = {
+                    isSatelliteMode = !isSatelliteMode
+                    Toast.makeText(
+                        context,
+                        if (isSatelliteMode) "सैटेलाइट व्यू (Satellite View)" else "मानचित्र व्यू (Map View)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                modifier = Modifier.testTag("toggle_map_layer_button"),
+                containerColor = if (isSatelliteMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                contentColor = if (isSatelliteMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Layers,
+                    contentDescription = "Toggle Satellite Layer",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Recenter My Location Button
+            SmallFloatingActionButton(
+                onClick = {
+                    val target = when {
+                        currentLocation != null -> OsmGeoPoint(currentLocation.lat, currentLocation.lng)
+                        points.isNotEmpty() -> OsmGeoPoint(points.last().lat, points.last().lng)
+                        else -> null
+                    }
+                    target?.let {
+                        mapView.controller.animateTo(it)
+                        mapView.controller.setZoom(19.0)
+                    } ?: run {
+                        Toast.makeText(context, "GPS location not available yet", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.testTag("recenter_map_button"),
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MyLocation,
+                    contentDescription = "My Location",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
@@ -261,6 +581,53 @@ private fun createLiveLocationDrawable(context: Context): android.graphics.drawa
     canvas.drawCircle(sizePx / 2f, sizePx / 2f, radius, bluePaint)
     canvas.drawCircle(sizePx / 2f, sizePx / 2f, radius, strokePaint)
     canvas.drawCircle(sizePx / 2f, sizePx / 2f, 4f * context.resources.displayMetrics.density, whitePaint)
+
+    return android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
+}
+
+private fun createEdgeBadgeDrawable(context: Context, text: String, isLive: Boolean = false): android.graphics.drawable.Drawable {
+    val density = context.resources.displayMetrics.density
+    val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.WHITE
+        textSize = 10.5f * density
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        textAlign = android.graphics.Paint.Align.CENTER
+    }
+
+    val textWidth = textPaint.measureText(text)
+    val textHeight = textPaint.descent() - textPaint.ascent()
+
+    val padH = 6f * density
+    val padV = 3f * density
+
+    val totalWidth = (textWidth + padH * 2).toInt().coerceAtLeast((36 * density).toInt())
+    val totalHeight = (textHeight + padV * 2).toInt().coerceAtLeast((20 * density).toInt())
+
+    val bitmap = android.graphics.Bitmap.createBitmap(totalWidth, totalHeight, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+
+    val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (isLive) AndroidColor.parseColor("#E60284C7") else AndroidColor.parseColor("#E61E5631")
+        style = android.graphics.Paint.Style.FILL
+    }
+    val borderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.WHITE
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 1.5f * density
+    }
+
+    val rect = android.graphics.RectF(
+        borderPaint.strokeWidth / 2f,
+        borderPaint.strokeWidth / 2f,
+        totalWidth - borderPaint.strokeWidth / 2f,
+        totalHeight - borderPaint.strokeWidth / 2f
+    )
+    val cornerRadius = 5f * density
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
+    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
+
+    val yPos = totalHeight / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+    canvas.drawText(text, totalWidth / 2f, yPos, textPaint)
 
     return android.graphics.drawable.BitmapDrawable(context.resources, bitmap)
 }

@@ -38,6 +38,8 @@ data class LiveMeasurementUiState(
     val polygonValidation: PolygonValidation = PolygonValidation.TooFewPoints(0),
     val estimatedAreaSqM: Double = 0.0,
     val estimatedPerimeterM: Double = 0.0,
+    val liveWalkingDistanceM: Double = 0.0,
+    val liveWalkingDistanceFt: Double = 0.0,
     val selectedLaggiHaath: Double = 6.0,
     val linkedLandCase: LandCaseEntity? = null,
     val wasManuallyEdited: Boolean = false,
@@ -45,7 +47,8 @@ data class LiveMeasurementUiState(
     val userNotice: String? = null,
     val warningMessage: String? = null,
     val isReadyForReview: Boolean = false,
-    val savedMeasurementId: Long? = null
+    val savedMeasurementId: Long? = null,
+    val detectedAreaName: String = ""
 )
 
 class LiveMeasurementViewModel(application: Application) : AndroidViewModel(application) {
@@ -136,6 +139,7 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
         }
 
         sessionStartTime = System.currentTimeMillis()
+        hasGeocoded = false
         _uiState.update {
             it.copy(
                 isTracking = true,
@@ -144,10 +148,34 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
                 recordedPoints = emptyList(),
                 startPointRecorded = false,
                 isWaitingForFreshGps = true,
+                detectedAreaName = "",
                 userNotice = "GPS चालू है..."
             )
         }
         startLocationUpdates()
+    }
+
+    private var hasGeocoded = false
+
+    private fun detectAreaName(location: Location) {
+        if (hasGeocoded) return
+        hasGeocoded = true
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val geocoder = android.location.Geocoder(getApplication(), java.util.Locale.getDefault())
+                @Suppress("DEPRECATION")
+                val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+                val address = addresses?.firstOrNull()
+                if (address != null) {
+                    val areaName = address.subLocality ?: address.locality ?: address.subAdminArea ?: "अज्ञात मौजा"
+                    _uiState.update { it.copy(detectedAreaName = areaName) }
+                } else {
+                    hasGeocoded = false
+                }
+            } catch (e: Exception) {
+                hasGeocoded = false
+            }
+        }
     }
 
     fun pauseTracking() {
@@ -177,7 +205,54 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
             lng = location.longitude,
             accuracy = location.accuracy
         )
-        _uiState.update { it.copy(currentLocation = currentGeo, currentAccuracy = location.accuracy) }
+        
+        val points = _uiState.value.recordedPoints
+        var walkingDistM = 0.0
+        var livePerimeter = _uiState.value.estimatedPerimeterM
+
+        if (points.isNotEmpty()) {
+            val lastPoint = points.last()
+            val distResults = FloatArray(1)
+            Location.distanceBetween(lastPoint.lat, lastPoint.lng, location.latitude, location.longitude, distResults)
+            walkingDistM = distResults[0].toDouble()
+
+            if (!_uiState.value.isClosed) {
+                // Sum of recorded edges
+                var recordedEdgesSum = 0.0
+                for (i in 0 until points.size - 1) {
+                    val r = FloatArray(1)
+                    Location.distanceBetween(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng, r)
+                    recordedEdgesSum += r[0].toDouble()
+                }
+
+                // Current walking distance back to start (Point #1)
+                val firstPoint = points.first()
+                val backToStartResults = FloatArray(1)
+                Location.distanceBetween(location.latitude, location.longitude, firstPoint.lat, firstPoint.lng, backToStartResults)
+                val distBackToStart = backToStartResults[0].toDouble()
+
+                livePerimeter = if (points.size == 1) {
+                    walkingDistM
+                } else {
+                    recordedEdgesSum + walkingDistM + distBackToStart
+                }
+            }
+        }
+
+        val walkingDistFt = walkingDistM * 3.28084
+        val quality = locationTracker.evaluateQuality(location.accuracy)
+
+        _uiState.update {
+            it.copy(
+                currentLocation = currentGeo,
+                currentAccuracy = location.accuracy,
+                gpsQuality = quality,
+                liveWalkingDistanceM = walkingDistM,
+                liveWalkingDistanceFt = walkingDistFt,
+                estimatedPerimeterM = if (!it.isClosed && points.isNotEmpty()) livePerimeter else it.estimatedPerimeterM
+            )
+        }
+        detectAreaName(location)
     }
 
     fun undoLastPoint() {
@@ -225,8 +300,10 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     fun finishMeasurement() {
         val points = _uiState.value.recordedPoints
         if (points.size < 3) return
+        // Mathematically close boundary by connecting the last corner back to Point #1
+        recalculateAndValidate(points, isClosed = true, edited = _uiState.value.wasManuallyEdited)
         stopTracking()
-        _uiState.update { it.copy(isReadyForReview = true) }
+        _uiState.update { it.copy(isClosed = true, isReadyForReview = true) }
     }
 
     fun saveMeasurement(title: String, notes: String, onSuccess: (Long) -> Unit) {
@@ -269,7 +346,39 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
     private fun recalculateAndValidate(points: List<GeoPoint>, isClosed: Boolean, edited: Boolean) {
         val validation = GeoLandCalculator.validatePolygon(points)
         val area = surveyEngine.calculateAreaSqMeters(points)
-        val perimeter = surveyEngine.calculatePerimeterMeters(points)
+        
+        val currentLoc = latestLocation
+        var walkingDistM = 0.0
+        if (points.isNotEmpty() && currentLoc != null) {
+            val d = FloatArray(1)
+            Location.distanceBetween(points.last().lat, points.last().lng, currentLoc.latitude, currentLoc.longitude, d)
+            walkingDistM = d[0].toDouble()
+        }
+
+        val perimeter = if (isClosed) {
+            surveyEngine.calculatePerimeterMeters(points)
+        } else {
+            if (points.isNotEmpty() && currentLoc != null) {
+                var recordedEdgesSum = 0.0
+                for (i in 0 until points.size - 1) {
+                    val r = FloatArray(1)
+                    Location.distanceBetween(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng, r)
+                    recordedEdgesSum += r[0].toDouble()
+                }
+                val firstPoint = points.first()
+                val backToStartResults = FloatArray(1)
+                Location.distanceBetween(currentLoc.latitude, currentLoc.longitude, firstPoint.lat, firstPoint.lng, backToStartResults)
+                val distBackToStart = backToStartResults[0].toDouble()
+
+                if (points.size == 1) {
+                    walkingDistM
+                } else {
+                    recordedEdgesSum + walkingDistM + distBackToStart
+                }
+            } else {
+                surveyEngine.calculateOpenPerimeterMeters(points)
+            }
+        }
 
         _uiState.update {
             it.copy(
@@ -278,6 +387,8 @@ class LiveMeasurementViewModel(application: Application) : AndroidViewModel(appl
                 polygonValidation = validation,
                 estimatedAreaSqM = area,
                 estimatedPerimeterM = perimeter,
+                liveWalkingDistanceM = walkingDistM,
+                liveWalkingDistanceFt = walkingDistM * 3.28084,
                 wasManuallyEdited = it.wasManuallyEdited || edited
             )
         }

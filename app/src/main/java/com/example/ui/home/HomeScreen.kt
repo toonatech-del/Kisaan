@@ -135,16 +135,6 @@ fun HomeScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            CustomBottomNavigationBar(
-                currentLanguage = currentLanguage,
-                onLanguageChanged = onLanguageChanged,
-                onConverterClick = onNavigateToConverter,
-                onRecordsClick = onNavigateToCases,
-                onFabClick = onNavigateToLiveMeasurement,
-                onSettingsClick = onNavigateToSettings
-            )
-        },
         containerColor = Color.Transparent
     ) { paddingValues ->
         Box(
@@ -156,11 +146,10 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .statusBarsPadding()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // 1. TOP HEADER BAR (Language Switcher removed from here)
+                // 1. TOP HEADER BAR
                 item {
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(
@@ -209,8 +198,63 @@ fun HomeScreen(
                             }
                         }
 
-                        // Right action buttons: Circular Help Button (Language switcher removed)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Right action buttons: Language Switcher, Settings, Help
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            // Language Switcher Dropdown
+                            Box {
+                                IconButton(
+                                    onClick = { showLanguageMenu = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("top_bar_language")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Language,
+                                        contentDescription = "Language",
+                                        tint = Color(0xFF3F634E),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showLanguageMenu,
+                                    onDismissRequest = { showLanguageMenu = false },
+                                    modifier = Modifier.testTag("language_dropdown_menu_top")
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("हिन्दी") },
+                                        onClick = {
+                                            onLanguageChanged(AppLanguage.HINDI)
+                                            showLanguageMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("English") },
+                                        onClick = {
+                                            onLanguageChanged(AppLanguage.ENGLISH)
+                                            showLanguageMenu = false
+                                        }
+                                    )
+                                }
+                            }
+
+                            // Settings Button
+                            IconButton(
+                                onClick = onNavigateToSettings,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("top_bar_settings")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color(0xFF3F634E),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
                             // Circular Outline Help Icon
                             IconButton(
                                 onClick = onNavigateToHelp,
@@ -222,7 +266,7 @@ fun HomeScreen(
                                     imageVector = Icons.Outlined.HelpOutline,
                                     contentDescription = strings.helpAndInfo,
                                     tint = Color(0xFF3F634E),
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -928,153 +972,7 @@ private fun OptionGridCard(
     }
 }
 
-/**
- * Bottom Navigation Bar with docked curved shape and center floating navigation button
- */
-@Composable
-private fun CustomBottomNavigationBar(
-    currentLanguage: AppLanguage,
-    onLanguageChanged: (AppLanguage) -> Unit,
-    onConverterClick: () -> Unit,
-    onRecordsClick: () -> Unit,
-    onFabClick: () -> Unit,
-    onSettingsClick: () -> Unit
-) {
-    var showLanguageMenu by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        // Dock Bar
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = Color(0xFFF3F8F2),
-            shadowElevation = 10.dp,
-            border = BorderStroke(1.5.dp, Color(0xFFB0C9B3))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Tab 1: Converter
-                IconButton(
-                    onClick = onConverterClick,
-                    modifier = Modifier.testTag("bottom_bar_converter")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SquareFoot,
-                        contentDescription = "Converter",
-                        tint = Color(0xFF1B4332),
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-
-                // Tab 2: Records
-                IconButton(
-                    onClick = onRecordsClick,
-                    modifier = Modifier.testTag("bottom_bar_records")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Folder,
-                        contentDescription = "Records",
-                        tint = Color(0xFF5A7365),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                // Space for Center Floating Button
-                Spacer(modifier = Modifier.width(56.dp))
-
-                // Tab 4: Language Switcher
-                Box {
-                    IconButton(
-                        onClick = { showLanguageMenu = true },
-                        modifier = Modifier.testTag("bottom_bar_language")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = "Language",
-                            tint = Color(0xFF5A7365),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showLanguageMenu,
-                        onDismissRequest = { showLanguageMenu = false },
-                        modifier = Modifier.testTag("language_dropdown_menu_bottom")
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("हिन्दी") },
-                            onClick = { onLanguageChanged(AppLanguage.HINDI); showLanguageMenu = false }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("English") },
-                            onClick = { onLanguageChanged(AppLanguage.ENGLISH); showLanguageMenu = false }
-                        )
-                    }
-                }
-
-                // Tab 5: Settings
-                IconButton(
-                    onClick = onSettingsClick,
-                    modifier = Modifier.testTag("bottom_bar_settings")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = Color(0xFF5A7365),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-        }
-
-        // Center Floating Action Button (Rises above dock)
-        Box(
-            modifier = Modifier
-                .offset(y = (-14).dp)
-                .size(62.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Glowing Halo Ring
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFFC7E8CB).copy(alpha = 0.5f),
-                modifier = Modifier.size(62.dp)
-            ) {}
-
-            // Button Surface with Gold Ring & Dark Green Center
-            Surface(
-                onClick = onFabClick,
-                shape = CircleShape,
-                color = Color(0xFF173D2B),
-                border = BorderStroke(2.5.dp, Color(0xFFD4AF37)),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .size(54.dp)
-                    .testTag("bottom_bar_measurement")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Explore,
-                        contentDescription = "Start Live Measurement",
-                        tint = Color(0xFFF3C762),
-                        modifier = Modifier
-                            .size(28.dp)
-                            .rotate(45f)
-                    )
-                }
-            }
-        }
-    }
-}
 
 private fun checkInternetConnection(context: Context): Boolean {
     val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager

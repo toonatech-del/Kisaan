@@ -91,6 +91,8 @@ fun MeasurementReviewScreen(
         mutableStateOf(
             if (uiState.linkedLandCase != null) {
                 "${uiState.linkedLandCase!!.farmerName} - Khesra ${uiState.linkedLandCase!!.khesraNumber}"
+            } else if (uiState.detectedAreaName.isNotBlank()) {
+                "नाप - ${uiState.detectedAreaName} (${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())})"
             } else {
                 "Field Measurement #${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())}"
             }
@@ -183,13 +185,20 @@ fun MeasurementReviewScreen(
 
                         ReviewMetricRow(
                             label = "Perimeter:",
-                            value = "${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)} meters"
+                            value = "${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)} m (${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM * 3.28084)} ft)"
                         )
 
                         ReviewMetricRow(
                             label = "GPS Accuracy:",
                             value = "±${String.format(Locale.US, "%.1f", avgAccuracy)} m (${uiState.gpsQuality.hindiLabel})"
                         )
+
+                        if (uiState.detectedAreaName.isNotBlank()) {
+                            ReviewMetricRow(
+                                label = "स्थान / मौजा:",
+                                value = "📍 ${uiState.detectedAreaName}"
+                            )
+                        }
 
                         if (uiState.wasManuallyEdited) {
                             Spacer(modifier = Modifier.height(6.dp))
@@ -387,7 +396,7 @@ fun MeasurementReviewScreen(
 @Composable
 private fun ReviewMetricRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -403,10 +412,10 @@ private fun ReviewMetricRow(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1.3f),
+            modifier = Modifier.weight(1.5f),
             textAlign = TextAlign.End,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            maxLines = 2,
+            softWrap = true
         )
     }
 }

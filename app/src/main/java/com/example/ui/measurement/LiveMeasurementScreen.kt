@@ -5,6 +5,7 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
@@ -43,6 +45,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -176,14 +179,25 @@ fun LiveMeasurementScreen(
                     }
                 },
                 actions = {
-                    IconButton(
+                    FilledTonalButton(
                         onClick = onNavigateToManualCalculator,
-                        modifier = Modifier.testTag("action_manual_calc")
+                        modifier = Modifier
+                            .height(36.dp)
+                            .testTag("action_manual_calc"),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.SquareFoot,
-                            contentDescription = "Fita Calculator",
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
                             tint = Color(0xFF1E5631)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "फ़ीता नाप",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1E5631)
                         )
                     }
                     IconButton(onClick = { showExplanationDialog = true }) {
@@ -218,7 +232,48 @@ fun LiveMeasurementScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (uiState.recordedPoints.size >= 3) {
+            if (uiState.recordedPoints.size in 1..2) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("live_progress_metrics_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "📏 वर्तमान दूरी (Last Corner)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${String.format(Locale.US, "%.1f", uiState.liveWalkingDistanceM)} m (${String.format(Locale.US, "%.1f", uiState.liveWalkingDistanceFt)} ft)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "🔄 लाइव कुल परिधि",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)} m (${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM * 3.28084)} ft)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            } else if (uiState.recordedPoints.size >= 3) {
                 AreaMetricsCard(
                     areaSqM = uiState.estimatedAreaSqM,
                     perimeterM = uiState.estimatedPerimeterM,
@@ -279,17 +334,33 @@ fun LiveMeasurementScreen(
                 else -> Unit
             }
 
-            com.example.ui.components.OsmLandMapView(
-                points = uiState.recordedPoints,
-                currentLocation = uiState.currentLocation,
-                isClosed = uiState.isClosed,
-                onPointMoved = { index, lat, lng ->
-                    viewModel.updatePointCoordinates(index, lat, lng)
-                },
+            // Dedicated Bounded Card Container for Map
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-            )
+                    .testTag("map_bounded_card_container"),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(16.dp))
+                ) {
+                    com.example.ui.components.OsmLandMapView(
+                        points = uiState.recordedPoints,
+                        currentLocation = uiState.currentLocation,
+                        isClosed = uiState.isClosed,
+                        onPointMoved = { index, lat, lng ->
+                            viewModel.updatePointCoordinates(index, lat, lng)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -360,6 +431,44 @@ fun LiveMeasurementScreen(
                                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text(strings.undoLast, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    // Live Walking Distance & Real-Time Perimeter Tracker Row
+                    if (uiState.recordedPoints.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFF0FDF4),
+                            border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+                            modifier = Modifier.fillMaxWidth().testTag("live_dock_distance_tracker")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "📏 वर्तमान दूरी: ${String.format(Locale.US, "%.1f", uiState.liveWalkingDistanceM)} m (${String.format(Locale.US, "%.1f", uiState.liveWalkingDistanceFt)} फ़ीट)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF166534),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = "कुल: ${String.format(Locale.US, "%.1f", uiState.estimatedPerimeterM)}m",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E5631)
+                                )
                             }
                         }
                     }
@@ -481,7 +590,10 @@ fun LiveMeasurementScreen(
                             }
 
                             Button(
-                                onClick = { viewModel.finishMeasurement() },
+                                onClick = {
+                                    viewModel.finishMeasurement()
+                                    onNavigateToReview()
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .heightIn(min = 48.dp)
@@ -602,6 +714,9 @@ private fun GpsStatusCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().testTag("gps_status_card"),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(
             containerColor = when (uiState.gpsQuality) {
                 GpsQualityLevel.EXCELLENT -> Color(0xFFF0FDF4)
@@ -657,6 +772,16 @@ private fun GpsStatusCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (uiState.detectedAreaName.isNotBlank()) {
+                        Text(
+                            text = "📍 स्थान: ${uiState.detectedAreaName}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF1E5631),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
 
@@ -750,7 +875,7 @@ private fun AreaMetricsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${String.format(java.util.Locale.US, "%.1f", perimeterM)} m",
+                        text = "${String.format(java.util.Locale.US, "%.1f", perimeterM)} m (${String.format(java.util.Locale.US, "%.1f", perimeterM * 3.28084)} ft)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
